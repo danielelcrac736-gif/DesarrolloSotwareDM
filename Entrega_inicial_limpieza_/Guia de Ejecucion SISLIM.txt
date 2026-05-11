@@ -1,0 +1,28 @@
+Usuario administrador para acceder:
+
+email: admin@sislim.com
+password: 1234
+
+-------------------------------------------------
+Terminal 1: Encender el Backend (Base de Datos)
+-------------------------------------------------
+powershell:
+
+cd backend
+.\venv\Scripts\activate
+uvicorn main:app --reload
+
+---------------------------------------------------
+Terminal 2: Encender el Frontend (Interfaz Visual)
+---------------------------------------------------
+powershell:
+
+cd frontend
+npm run dev
+
+-----------------------------------------------------------
+Nota: Mantener las terminales abiertas.
+Al correr las terminales, entrar a http://localhost:5173/
+
+-----------------------------------------------------------
+Si la base de datos está vacía (no hay usuarios), el primer es crear un usuario desde la documentación interactiva que genera FastAPI: http://127.0.0.1:8000/docs (Abrir el bloque que dice POST /users/, hacer clic en "Try it out", llenar los datos del JSON y presionar "Execute").
