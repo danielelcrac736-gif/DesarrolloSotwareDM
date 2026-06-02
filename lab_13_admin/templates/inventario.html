@@ -1,0 +1,800 @@
+{% extends "base.html" %}
+{# ============================================================================
+   inventario.html — Módulo de Inventario: listado y gestión de productos
+   Extiende base.html.
+
+   Variables recibidas desde app.py (ruta GET /inventario):
+     productos   → list : todos los productos (id, nombre, descripcion, categoria,
+                          precio_unitario, stock, stock_minimo, unidad, estado)
+     stats       → Row  : total_productos, valor_total, stock_bajo, num_categorias
+     categorias  → list : categorías únicas para el filtro
+   ============================================================================ #}
+
+{% block page_title %}Inventario{% endblock %}
+{% block nav_title %}<i class="fa-solid fa-boxes-stacked page-icon"></i> Inventario{% endblock %}
+
+{# ── Mapa de colores de badge por categoría — un color distinto por cada una ─ #}
+{# Este diccionario Jinja2 se evalúa una sola vez al renderizar el template     #}
+{% set CAT_COLOR = {
+  'Tecnología':  'blue',
+  'Oficina':     'neutral',
+  'Manufactura': 'yellow',
+  'Alimentos':   'green',
+  'Servicios':   'purple'
+} %}
+
+{# ── Definición inline del color "purple" — no existe en style.css como clase,
+   así que lo mapeamos a "accent" cuando se use en badges #}
+{# Nota: la clase real en style.css es badge-info (azul) y badge-neutral (gris).
+   Usaremos estilos inline para el morado de Servicios.                         #}
+
+{% block content %}
+
+{# ── Cabecera de página ────────────────────────────────────────────────────── #}
+<div class="page-header">
+  <div class="page-header-left">
+    <h2>Gestión de Inventario</h2>
+    <p>Control de stock · {{ stats.total_productos }} producto(s) registrado(s)</p>
+  </div>
+  <div class="page-header-actions">
+    <button class="btn btn-primary" onclick="abrirModal('modalNuevoProducto')">
+      <i class="fa-solid fa-plus"></i>
+      Nuevo Producto
+    </button>
+  </div>
+</div>
+
+
+{# ── 4 Stat-cards de resumen ──────────────────────────────────────────────── #}
+{# Los valores vienen del objeto stats calculado en app.py con una sola query  #}
+<div style="display:grid; grid-template-columns:repeat(4,1fr); gap:18px;
+            margin-bottom:24px;">
+
+  {# Card 1: Total de productos activos #}
+  <div class="stat-card" style="animation-delay:0.05s;">
+    <span class="stat-label">
+      <i class="fa-solid fa-boxes-stacked"></i> Total Productos
+    </span>
+    <span class="stat-value">{{ stats.total_productos }}</span>
+    <span class="stat-sub">{{ stats.num_categorias }} categorías distintas</span>
+  </div>
+
+  {# Card 2: Valor monetario total del inventario (precio × stock) #}
+  <div class="stat-card" style="animation-delay:0.10s;">
+    <span class="stat-label">
+      <i class="fa-solid fa-coins"></i> Valor del Inventario
+    </span>
+    <span class="stat-value green" style="font-size:20px;">
+      Bs. {{ '{:,.0f}'.format(stats.valor_total) }}
+    </span>
+    <span class="stat-sub">Precio unitario × stock actual</span>
+  </div>
+
+  {# Card 3: Productos con stock por debajo del mínimo configurado #}
+  <div class="stat-card" style="animation-delay:0.15s;">
+    <span class="stat-label">
+      <i class="fa-solid fa-triangle-exclamation"></i> Stock Bajo
+    </span>
+    <span class="stat-value {% if stats.stock_bajo > 0 %}red{% else %}green{% endif %}">
+      {{ stats.stock_bajo }}
+    </span>
+    <span class="stat-sub">
+      {% if stats.stock_bajo > 0 %}
+        Requieren reposición urgente
+      {% else %}
+        Todo en niveles normales
+      {% endif %}
+    </span>
+  </div>
+
+  {# Card 4: Número de categorías únicas de productos #}
+  <div class="stat-card" style="animation-delay:0.20s;">
+    <span class="stat-label">
+      <i class="fa-solid fa-tags"></i> Categorías
+    </span>
+    <span class="stat-value blue">{{ stats.num_categorias }}</span>
+    <span class="stat-sub">Líneas de producto</span>
+  </div>
+
+</div>
+{# Fin stat-cards #}
+
+
+{# ── Card principal: filtros + tabla de productos ─────────────────────────── #}
+<div class="card">
+
+  {# ── Barra de filtros combinados ─────────────────────────────────────── #}
+  <div class="card-header">
+    <span class="card-title">
+      <i class="fa-solid fa-warehouse"></i> Catálogo de Productos
+    </span>
+
+    {# Los 3 filtros se aplican simultáneamente con filtrarInventario() en JS #}
+    <div class="filters-row">
+
+      {# Buscador por nombre o descripción #}
+      <div class="input-with-icon" style="min-width:200px;">
+        <span class="input-icon"><i class="fa-solid fa-magnifying-glass"></i></span>
+        <input
+          type="text"
+          id="buscadorProducto"
+          class="form-control"
+          placeholder="Buscar producto..."
+          oninput="filtrarInventario()"
+        />
+      </div>
+
+      {# Filtro por categoría — opciones generadas desde la lista categorias #}
+      <select id="filtroCategoria" class="form-control" style="min-width:150px;"
+              onchange="filtrarInventario()">
+        <option value="">Todas las categorías</option>
+        {% for cat in categorias %}
+          <option value="{{ cat.categoria }}">{{ cat.categoria }}</option>
+        {% endfor %}
+      </select>
+
+      {# Filtro por estado de stock #}
+      <select id="filtroStock" class="form-control" style="min-width:150px;"
+              onchange="filtrarInventario()">
+        <option value="">Todos los estados</option>
+        <option value="normal">Stock Normal</option>
+        <option value="bajo">Stock Bajo</option>
+        <option value="sin-stock">Sin Stock</option>
+      </select>
+
+    </div>
+  </div>
+  {# Fin barra de filtros #}
+
+
+  {# ── Tabla de productos ───────────────────────────────────────────────── #}
+  <div class="table-wrapper">
+    <table class="table" id="tablaInventario">
+
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Producto</th>
+          <th class="hide-mobile">Categoría</th>
+          <th>Precio Unit.</th>
+          <th>Stock</th>
+          <th class="hide-mobile">Mín.</th>
+          <th>Estado</th>
+          <th style="min-width:100px;" class="hide-mobile">Nivel</th>
+          <th>Acciones</th>
+        </tr>
+      </thead>
+
+      <tbody id="cuerpoTablaInventario">
+        {% for p in productos %}
+
+        {# ── Calcular estado de stock para esta fila ─────────────────────── #}
+        {% if p.stock == 0 %}
+          {% set stock_status = 'sin-stock' %}
+          {% set badge_class  = 'badge-danger' %}
+          {% set badge_texto  = 'Sin Stock' %}
+          {% set barra_clase  = 'bar-red' %}
+        {% elif p.stock < p.stock_minimo %}
+          {% set stock_status = 'bajo' %}
+          {% set badge_class  = 'badge-warning' %}
+          {% set badge_texto  = 'Stock Bajo' %}
+          {% set barra_clase  = 'bar-yellow' %}
+        {% else %}
+          {% set stock_status = 'normal' %}
+          {% set badge_class  = 'badge-success' %}
+          {% set badge_texto  = 'Normal' %}
+          {% set barra_clase  = 'bar-green' %}
+        {% endif %}
+
+        {# ── Calcular porcentaje para la barra de progreso ─────────────── #}
+        {# Ancho = stock / stock_minimo × 100, con techo en 100 y piso en 0 #}
+        {% if p.stock_minimo > 0 %}
+          {% set raw_pct = ((p.stock / p.stock_minimo) * 100) | int %}
+          {% set pct = raw_pct if raw_pct <= 100 else 100 %}
+          {% set pct = pct if pct >= 0 else 0 %}
+        {% else %}
+          {% set pct = 100 %}
+        {% endif %}
+
+        {# ── Obtener color del badge de categoría del mapa CAT_COLOR ──── #}
+        {% set cat_color = CAT_COLOR.get(p.categoria, 'neutral') %}
+
+        {# ── Fila de la tabla — fondo rojizo si stock = 0 ──────────────── #}
+        <tr class="fila-producto"
+            data-nombre="{{ p.nombre | lower }}"
+            data-descripcion="{{ (p.descripcion or '') | lower }}"
+            data-categoria="{{ p.categoria }}"
+            data-stock-status="{{ stock_status }}"
+            data-estado="{{ p.estado }}"
+            {% if p.stock == 0 %}
+              style="background-color: rgba(255, 71, 87, 0.06);"
+            {% endif %}>
+
+          {# ID del producto #}
+          <td style="color:var(--text-muted); font-size:12px;">#{{ p.id }}</td>
+
+          {# Nombre + descripción reducida #}
+          <td>
+            <div class="cell-title">{{ p.nombre }}</div>
+            {% if p.descripcion %}
+              <div class="cell-sub" style="max-width:220px; overflow:hidden;
+                   text-overflow:ellipsis; white-space:nowrap;"
+                   title="{{ p.descripcion }}">
+                {{ p.descripcion }}
+              </div>
+            {% endif %}
+          </td>
+
+          {# Badge de categoría con color según el mapa CAT_COLOR #}
+          <td class="hide-mobile">
+            {% if cat_color == 'blue' %}
+              <span class="badge badge-info">{{ p.categoria }}</span>
+            {% elif cat_color == 'yellow' %}
+              <span class="badge badge-warning">{{ p.categoria }}</span>
+            {% elif cat_color == 'green' %}
+              <span class="badge badge-success">{{ p.categoria }}</span>
+            {% elif cat_color == 'purple' %}
+              {# Servicios usa estilo inline morado (acento del sistema) #}
+              <span class="badge" style="background:rgba(108,99,255,0.12);
+                    color:var(--accent-light);
+                    border:1px solid rgba(108,99,255,0.25);">
+                {{ p.categoria }}
+              </span>
+            {% else %}
+              <span class="badge badge-neutral">{{ p.categoria }}</span>
+            {% endif %}
+          </td>
+
+          {# Precio unitario formateado en Bolivianos #}
+          <td style="font-weight:600; color:var(--text-primary);">
+            Bs. {{ '{:,.2f}'.format(p.precio_unitario) }}
+          </td>
+
+          {# Stock actual — coloreado según el nivel #}
+          <td>
+            <span style="font-size:16px; font-weight:700; color:
+              {% if p.stock == 0 %}var(--accent-red)
+              {% elif p.stock < p.stock_minimo %}var(--accent-yellow)
+              {% else %}var(--accent-green){% endif %};">
+              {{ p.stock }}
+            </span>
+            <span style="font-size:11px; color:var(--text-muted);
+                         margin-left:2px;">{{ p.unidad }}</span>
+          </td>
+
+          {# Stock mínimo configurado #}
+          <td class="hide-mobile" style="font-size:13px; color:var(--text-muted);">
+            {{ p.stock_minimo }}
+          </td>
+
+          {# Badge de estado de stock #}
+          <td>
+            <span class="badge {{ badge_class }}">{{ badge_texto }}</span>
+          </td>
+
+          {# Barra de progreso proporcional (stock / stock_minimo × 100%) #}
+          <td class="hide-mobile">
+            <div class="progress-wrap">
+              <div class="progress">
+                <div class="progress-bar {{ barra_clase }}"
+                     style="width: {{ pct }}%;">
+                </div>
+              </div>
+              <span class="progress-label">{{ pct }}%</span>
+            </div>
+          </td>
+
+          {# Botones de acción: Editar y Eliminar #}
+          <td>
+            <div class="actions-cell">
+
+              {# Botón Editar: almacena todos los datos del producto en data-* #}
+              <button
+                class="btn btn-icon"
+                title="Editar / Ajustar stock"
+                onclick="abrirModalEditar(this)"
+                data-id="{{ p.id }}"
+                data-nombre="{{ p.nombre }}"
+                data-descripcion="{{ p.descripcion or '' }}"
+                data-categoria="{{ p.categoria }}"
+                data-precio="{{ p.precio_unitario }}"
+                data-stock="{{ p.stock }}"
+                data-stock-minimo="{{ p.stock_minimo }}"
+                data-unidad="{{ p.unidad }}"
+              >
+                <i class="fa-solid fa-pen"></i>
+              </button>
+
+              {# Botón Eliminar: usa confirmDelete() de main.js #}
+              <form action="{{ url_for('inventario_eliminar', id=p.id) }}"
+                    method="POST"
+                    id="formElimProd{{ p.id }}"
+                    style="display:inline;">
+                <button
+                  type="button"
+                  class="btn btn-icon btn-icon-danger"
+                  title="Eliminar producto"
+                  onclick="confirmDelete('formElimProd{{ p.id }}', '{{ p.nombre }}')">
+                  <i class="fa-solid fa-trash"></i>
+                </button>
+              </form>
+
+            </div>
+          </td>
+
+        </tr>
+        {% else %}
+        {# Estado vacío cuando no hay productos #}
+        <tr>
+          <td colspan="9">
+            <div class="empty-state">
+              <i class="fa-solid fa-box-open"></i>
+              <p>No hay productos en el inventario.<br>
+                <a href="#" onclick="abrirModal('modalNuevoProducto')">
+                  Agrega el primero
+                </a>
+              </p>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+
+    </table>
+  </div>
+  {# Fin tabla #}
+
+  {# Contador de resultados visibles #}
+  <div style="padding:12px 24px; border-top:1px solid var(--border);
+              font-size:12px; color:var(--text-muted); text-align:right;">
+    Mostrando <span id="contadorProductos">{{ productos | length }}</span>
+    de {{ productos | length }} productos
+  </div>
+
+</div>
+{# Fin card principal #}
+
+
+{# ══════════════════════════════════════════════════════════════════════════
+   MODAL: Nuevo Producto
+   ══════════════════════════════════════════════════════════════════════════ #}
+<div class="modal-overlay" id="modalNuevoProducto"
+     onclick="cerrarAlClickAfuera(event, 'modalNuevoProducto')">
+  <div class="modal modal-lg">
+
+    <div class="modal-header">
+      <span class="modal-title">
+        <i class="fa-solid fa-plus-circle"></i>
+        Agregar Nuevo Producto
+      </span>
+      <button class="modal-close" onclick="cerrarModal('modalNuevoProducto')"
+              aria-label="Cerrar">&times;</button>
+    </div>
+
+    <form action="{{ url_for('inventario_nuevo') }}" method="POST">
+      <div class="modal-body">
+
+        <div class="form-grid-2">
+          <div class="form-group">
+            <label class="form-label required">Nombre del Producto</label>
+            <input type="text" name="nombre" class="form-control"
+                   placeholder="Ej: Laptop Dell Inspiron 15" required />
+          </div>
+          <div class="form-group">
+            <label class="form-label required">Categoría</label>
+            <select name="categoria" class="form-control" required>
+              <option value="">— Seleccionar —</option>
+              <option value="Tecnología">Tecnología</option>
+              <option value="Oficina">Oficina</option>
+              <option value="Manufactura">Manufactura</option>
+              <option value="Alimentos">Alimentos</option>
+              <option value="Servicios">Servicios</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Descripción</label>
+          <textarea name="descripcion" class="form-control" rows="2"
+                    placeholder="Especificaciones técnicas o descripción breve..."></textarea>
+        </div>
+
+        <div class="form-grid-2">
+          <div class="form-group">
+            <label class="form-label required">Precio Unitario (Bs.)</label>
+            <div class="input-with-icon">
+              <span class="input-icon"
+                    style="font-size:11px; font-weight:700;">Bs.</span>
+              <input type="number" name="precio_unitario" class="form-control"
+                     placeholder="0.00" step="0.01" min="0" required
+                     style="padding-left: 42px;" />
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label required">Unidad de Medida</label>
+            <select name="unidad" class="form-control" required>
+              <option value="und">und — Unidad</option>
+              <option value="kg">kg — Kilogramo</option>
+              <option value="lt">lt — Litro</option>
+              <option value="m">m — Metro</option>
+              <option value="cja">cja — Caja</option>
+              <option value="paq">paq — Paquete</option>
+              <option value="bol">bol — Bolsa</option>
+              <option value="bot">bot — Botella</option>
+              <option value="gal">gal — Galón</option>
+              <option value="lic">lic — Licencia</option>
+              <option value="svc">svc — Servicio</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-grid-2">
+          <div class="form-group">
+            <label class="form-label required">Stock Actual</label>
+            <input type="number" name="stock" class="form-control"
+                   placeholder="0" min="0" value="0" required />
+            <span class="form-help">Cantidad disponible al momento del registro</span>
+          </div>
+          <div class="form-group">
+            <label class="form-label required">Stock Mínimo</label>
+            <input type="number" name="stock_minimo" class="form-control"
+                   placeholder="10" min="0" value="10" required />
+            <span class="form-help">Umbral de alerta de reposición</span>
+          </div>
+        </div>
+
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary"
+                onclick="cerrarModal('modalNuevoProducto')">
+          Cancelar
+        </button>
+        <button type="submit" class="btn btn-primary">
+          <i class="fa-solid fa-floppy-disk"></i> Guardar Producto
+        </button>
+      </div>
+    </form>
+
+  </div>
+</div>
+{# Fin modal Nuevo Producto #}
+
+
+{# ══════════════════════════════════════════════════════════════════════════
+   MODAL: Editar Producto / Ajustar Stock
+   El action y todos los campos se rellenan dinámicamente con JS.
+   Incluye campo especial de ajuste de stock (+N / -N).
+   ══════════════════════════════════════════════════════════════════════════ #}
+<div class="modal-overlay" id="modalEditarProducto"
+     onclick="cerrarAlClickAfuera(event, 'modalEditarProducto')">
+  <div class="modal modal-lg">
+
+    <div class="modal-header">
+      <span class="modal-title">
+        <i class="fa-solid fa-pen-to-square"></i>
+        Editar Producto
+      </span>
+      <button class="modal-close" onclick="cerrarModal('modalEditarProducto')"
+              aria-label="Cerrar">&times;</button>
+    </div>
+
+    {# Action del form se actualiza con JS al abrir el modal #}
+    <form id="formEditarProducto" method="POST">
+      <div class="modal-body">
+
+        <div class="form-grid-2">
+          <div class="form-group">
+            <label class="form-label required">Nombre del Producto</label>
+            <input type="text" name="nombre" id="edit_nombre" class="form-control"
+                   required />
+          </div>
+          <div class="form-group">
+            <label class="form-label required">Categoría</label>
+            <select name="categoria" id="edit_categoria" class="form-control" required>
+              <option value="Tecnología">Tecnología</option>
+              <option value="Oficina">Oficina</option>
+              <option value="Manufactura">Manufactura</option>
+              <option value="Alimentos">Alimentos</option>
+              <option value="Servicios">Servicios</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Descripción</label>
+          <textarea name="descripcion" id="edit_descripcion"
+                    class="form-control" rows="2"></textarea>
+        </div>
+
+        <div class="form-grid-2">
+          <div class="form-group">
+            <label class="form-label required">Precio Unitario (Bs.)</label>
+            <div class="input-with-icon">
+              <span class="input-icon"
+                    style="font-size:11px; font-weight:700;">Bs.</span>
+              <input type="number" name="precio_unitario" id="edit_precio"
+                     class="form-control" step="0.01" min="0" required
+                     style="padding-left: 42px;" />
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label required">Unidad de Medida</label>
+            <select name="unidad" id="edit_unidad" class="form-control" required>
+              <option value="und">und — Unidad</option>
+              <option value="kg">kg — Kilogramo</option>
+              <option value="lt">lt — Litro</option>
+              <option value="m">m — Metro</option>
+              <option value="cja">cja — Caja</option>
+              <option value="paq">paq — Paquete</option>
+              <option value="bol">bol — Bolsa</option>
+              <option value="bot">bot — Botella</option>
+              <option value="gal">gal — Galón</option>
+              <option value="lic">lic — Licencia</option>
+              <option value="svc">svc — Servicio</option>
+            </select>
+          </div>
+        </div>
+
+        {# ── Sección especial: Ajuste de Stock ──────────────────────────── #}
+        {# Permite al usuario sumar (+N) o restar (-N) al stock actual,
+           o escribir directamente el nuevo valor.
+           El campo oculto "stock" es el que envía el formulario.             #}
+        <div style="background:rgba(108,99,255,0.06); border:1px solid var(--border-light);
+                    border-radius:10px; padding:16px 18px; margin-bottom:16px;">
+
+          <p style="font-size:12px; font-weight:600; text-transform:uppercase;
+                    letter-spacing:0.8px; color:var(--text-muted); margin-bottom:14px;">
+            <i class="fa-solid fa-sliders"></i>
+            Gestión de Stock
+          </p>
+
+          <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:14px;">
+
+            {# Campo 1: Stock actual (solo lectura, de referencia) #}
+            <div class="form-group" style="margin-bottom:0;">
+              <label class="form-label">Stock Actual</label>
+              <input type="number" id="edit_stock_actual_display"
+                     class="form-control" readonly
+                     style="background:var(--bg-hover); cursor:default;
+                            color:var(--text-secondary);" />
+            </div>
+
+            {# Campo 2: Ajuste (+/-) — el usuario escribe cuánto sumar o restar #}
+            <div class="form-group" style="margin-bottom:0;">
+              <label class="form-label">Ajuste (+/-)</label>
+              <input type="number" id="edit_ajuste"
+                     class="form-control"
+                     placeholder="Ej: +10 ó -5"
+                     oninput="calcularNuevoStock()"
+                     style="border-color: var(--accent);" />
+              <span class="form-help">Positivo suma, negativo resta</span>
+            </div>
+
+            {# Campo 3: Nuevo stock calculado (editable directo también) #}
+            <div class="form-group" style="margin-bottom:0;">
+              <label class="form-label" style="color:var(--accent-green);">
+                Nuevo Stock ✓
+              </label>
+              <input type="number" id="edit_stock_nuevo_display"
+                     class="form-control" min="0"
+                     oninput="sincronizarNuevoStock(this.value)"
+                     style="border-color:var(--accent-green);
+                            color:var(--accent-green); font-weight:700;" />
+            </div>
+
+          </div>
+
+          {# Campo oculto que realmente envía el nuevo valor al servidor #}
+          <input type="hidden" name="stock" id="edit_stock_real" />
+          <input type="hidden" name="stock_minimo" id="edit_stock_minimo_hidden" />
+
+        </div>
+        {# Fin sección ajuste de stock #}
+
+        {# Stock mínimo visible (también actualiza el hidden) #}
+        <div class="form-grid-2">
+          <div class="form-group">
+            <label class="form-label required">Stock Mínimo</label>
+            <input type="number" id="edit_stock_minimo_visible"
+                   class="form-control" min="0"
+                   oninput="document.getElementById('edit_stock_minimo_hidden').value = this.value"
+                   required />
+            <span class="form-help">Umbral de alerta de reposición</span>
+          </div>
+          <div class="form-group">
+            {# Indicador visual del estado resultante con el nuevo stock #}
+            <label class="form-label">Estado resultante</label>
+            <div id="estadoResultante"
+                 style="padding:10px 14px; border-radius:8px; font-size:13px;
+                        font-weight:600; background:var(--bg-hover);
+                        color:var(--text-muted); border:1px solid var(--border);">
+              <i class="fa-solid fa-circle-question"></i>
+              Ingresa el ajuste
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary"
+                onclick="cerrarModal('modalEditarProducto')">
+          Cancelar
+        </button>
+        <button type="submit" class="btn btn-primary">
+          <i class="fa-solid fa-floppy-disk"></i> Guardar Cambios
+        </button>
+      </div>
+    </form>
+
+  </div>
+</div>
+{# Fin modal Editar Producto #}
+
+{% endblock %}
+
+
+{# ═══════════════════════════════════════════════════════════════════════════
+   EXTRA_JS — Filtros combinados y lógica de modales de inventario
+   ═══════════════════════════════════════════════════════════════════════════ #}
+{% block extra_js %}
+<script>
+
+/* ── filtrarInventario() ─────────────────────────────────────────────────────
+   Aplica los 3 filtros simultáneamente sobre las filas de la tabla:
+   1. Texto libre (nombre o descripción)
+   2. Categoría seleccionada en el select
+   3. Estado de stock (normal / bajo / sin-stock)
+   Actualiza el contador de resultados visibles al final.                     */
+function filtrarInventario() {
+  const texto     = document.getElementById('buscadorProducto').value.toLowerCase().trim();
+  const categoria = document.getElementById('filtroCategoria').value;
+  const stockFiltro = document.getElementById('filtroStock').value;
+  const filas     = document.querySelectorAll('.fila-producto');
+  let visibles = 0;
+
+  filas.forEach(fila => {
+    // ── Criterio 1: coincidencia de texto en nombre o descripción ─────────
+    const coincideTexto = !texto ||
+      fila.dataset.nombre.includes(texto) ||
+      fila.dataset.descripcion.includes(texto);
+
+    // ── Criterio 2: coincidencia de categoría ─────────────────────────────
+    const coincideCategoria = !categoria || fila.dataset.categoria === categoria;
+
+    // ── Criterio 3: estado de stock ───────────────────────────────────────
+    const coincideStock = !stockFiltro || fila.dataset.stockStatus === stockFiltro;
+
+    if (coincideTexto && coincideCategoria && coincideStock) {
+      fila.style.display = '';
+      visibles++;
+    } else {
+      fila.style.display = 'none';
+    }
+  });
+
+  // Actualizar contador de resultados visibles
+  const cont = document.getElementById('contadorProductos');
+  if (cont) cont.textContent = visibles;
+}
+
+
+/* ── abrirModalEditar(btn) ───────────────────────────────────────────────────
+   Rellena el modal de edición con los datos del producto cuyo botón
+   fue clickeado (leídos desde los atributos data-* del botón).
+   También resetea el campo de ajuste y recalcula el estado visual.          */
+function abrirModalEditar(btn) {
+  const id          = btn.dataset.id;
+  const stockActual = parseInt(btn.dataset.stock) || 0;
+  const stockMin    = parseInt(btn.dataset.stockMinimo) || 10;
+
+  // ── Actualizar el action del form con el ID correcto ────────────────────
+  document.getElementById('formEditarProducto').action = `/inventario/${id}/editar`;
+
+  // ── Rellenar campos de texto ────────────────────────────────────────────
+  document.getElementById('edit_nombre').value      = btn.dataset.nombre      || '';
+  document.getElementById('edit_descripcion').value = btn.dataset.descripcion || '';
+  document.getElementById('edit_precio').value      = btn.dataset.precio      || '';
+  document.getElementById('edit_unidad').value      = btn.dataset.unidad      || 'und';
+
+  // ── Rellenar select de categoría ────────────────────────────────────────
+  const selCat = document.getElementById('edit_categoria');
+  selCat.value = btn.dataset.categoria || '';
+
+  // ── Rellenar sección de stock ────────────────────────────────────────────
+  document.getElementById('edit_stock_actual_display').value = stockActual;
+  document.getElementById('edit_stock_nuevo_display').value  = stockActual;
+  document.getElementById('edit_stock_real').value           = stockActual;
+  document.getElementById('edit_ajuste').value               = '';  // resetear ajuste
+
+  // ── Stock mínimo en campo visible y en el hidden ─────────────────────────
+  document.getElementById('edit_stock_minimo_visible').value  = stockMin;
+  document.getElementById('edit_stock_minimo_hidden').value   = stockMin;
+
+  // Actualizar el indicador de estado resultante con el stock actual
+  actualizarEstadoResultante(stockActual, stockMin);
+
+  // Abrir el modal
+  abrirModal('modalEditarProducto');
+
+  // Enfocar el campo de ajuste para facilidad de uso
+  setTimeout(() => document.getElementById('edit_ajuste').focus(), 200);
+}
+
+
+/* ── calcularNuevoStock() ────────────────────────────────────────────────────
+   Se ejecuta al escribir en el campo "Ajuste (+/-)".
+   Toma el stock actual + el ajuste ingresado y calcula el nuevo stock.
+   Actualiza el campo visual "Nuevo Stock" y el campo oculto que va al servidor. */
+function calcularNuevoStock() {
+  const stockActual = parseInt(
+    document.getElementById('edit_stock_actual_display').value
+  ) || 0;
+  const ajuste = parseInt(document.getElementById('edit_ajuste').value) || 0;
+  const nuevoStock = Math.max(0, stockActual + ajuste);  // no puede ser negativo
+
+  // Actualizar el campo visual del nuevo stock
+  document.getElementById('edit_stock_nuevo_display').value = nuevoStock;
+
+  // Actualizar el campo oculto que envía el POST al servidor
+  document.getElementById('edit_stock_real').value = nuevoStock;
+
+  // Actualizar el indicador de estado resultante
+  const stockMin = parseInt(
+    document.getElementById('edit_stock_minimo_visible').value
+  ) || 10;
+  actualizarEstadoResultante(nuevoStock, stockMin);
+}
+
+
+/* ── sincronizarNuevoStock(valor) ────────────────────────────────────────────
+   Se ejecuta al editar directamente el campo "Nuevo Stock".
+   Sincroniza el campo oculto y recalcula el ajuste mostrado.                 */
+function sincronizarNuevoStock(valor) {
+  const nuevoStock  = Math.max(0, parseInt(valor) || 0);
+  const stockActual = parseInt(
+    document.getElementById('edit_stock_actual_display').value
+  ) || 0;
+
+  // Recalcular el ajuste equivalente para mostrarlo
+  document.getElementById('edit_ajuste').value = nuevoStock - stockActual;
+
+  // Actualizar el campo oculto
+  document.getElementById('edit_stock_real').value = nuevoStock;
+
+  // Actualizar el indicador de estado resultante
+  const stockMin = parseInt(
+    document.getElementById('edit_stock_minimo_visible').value
+  ) || 10;
+  actualizarEstadoResultante(nuevoStock, stockMin);
+}
+
+
+/* ── actualizarEstadoResultante(stock, minimo) ───────────────────────────────
+   Actualiza el panel indicador de estado de stock resultante con colores
+   y texto descriptivo según el nivel calculado.                              */
+function actualizarEstadoResultante(stock, minimo) {
+  const el = document.getElementById('estadoResultante');
+  if (!el) return;
+
+  if (stock === 0) {
+    el.style.background    = 'rgba(255,71,87,0.1)';
+    el.style.borderColor   = 'rgba(255,71,87,0.3)';
+    el.style.color         = 'var(--accent-red)';
+    el.innerHTML = '<i class="fa-solid fa-circle-xmark"></i> Sin Stock';
+  } else if (stock < minimo) {
+    el.style.background    = 'rgba(255,165,2,0.1)';
+    el.style.borderColor   = 'rgba(255,165,2,0.3)';
+    el.style.color         = 'var(--accent-yellow)';
+    el.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i> Stock Bajo (${stock} / mín. ${minimo})`;
+  } else {
+    el.style.background    = 'rgba(0,212,170,0.1)';
+    el.style.borderColor   = 'rgba(0,212,170,0.3)';
+    el.style.color         = 'var(--accent-green)';
+    el.innerHTML = `<i class="fa-solid fa-circle-check"></i> Normal (${stock} / mín. ${minimo})`;
+  }
+}
+
+</script>
+{% endblock %}

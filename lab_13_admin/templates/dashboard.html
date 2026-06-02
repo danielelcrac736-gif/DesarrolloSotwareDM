@@ -1,0 +1,614 @@
+{% extends "base.html" %}
+{# ============================================================================
+   dashboard.html — Página principal del ERP: KPIs, gráficos y tablas resumen
+   Extiende base.html. Los datos llegan desde la ruta "/" en app.py.
+
+   Variables recibidas desde app.py:
+     ventas_mes          → float  : suma de facturas pagadas este mes (Bs.)
+     clientes_activos    → int    : clientes con estado = 'Activo'
+     facturas_pendientes → int    : facturas sin cobrar
+     stock_bajo          → int    : productos con stock < stock_mínimo
+     ultimas_facturas    → list   : últimas 5 facturas (numero, cliente_nombre,
+                                    fecha_emision, total, estado)
+     top_productos       → list   : top 5 productos (nombre, categoria,
+                                    stock, stock_minimo, vendidos)
+   ============================================================================ #}
+
+{% block page_title %}Dashboard{% endblock %}
+{% block nav_title %}<i class="fa-solid fa-gauge-high page-icon"></i> Dashboard{% endblock %}
+
+
+{# ═══════════════════════════════════════════════════════════════════════════
+   CONTENIDO PRINCIPAL
+   ═══════════════════════════════════════════════════════════════════════════ #}
+{% block content %}
+
+{# ── Cabecera de la página ─────────────────────────────────────────────────── #}
+<div class="page-header">
+  <div class="page-header-left">
+    <h2>Panel de Control</h2>
+    <p>Resumen ejecutivo en tiempo real · {{ session.get('nombre') }}</p>
+  </div>
+  {# Fecha actual renderizada en el servidor #}
+  <div style="display:flex; align-items:center; gap:8px;
+              color:var(--text-muted); font-size:13px;">
+    <i class="fa-regular fa-calendar"></i>
+    <span id="fechaHoy"></span>
+  </div>
+</div>
+
+
+{# ── SECCIÓN 1: 4 KPI Cards ──────────────────────────────────────────────── #}
+{# Cada card muestra: ícono, valor principal, etiqueta y tendencia vs mes anterior #}
+<div class="kpi-grid">
+
+  {# Card 1 — Ventas del Mes #}
+  <div class="kpi-card">
+    <div class="kpi-icon green">
+      <i class="fa-solid fa-chart-line"></i>
+    </div>
+    <div class="kpi-data">
+      <div class="kpi-value">
+        {# Formatear el número como Bs. 1,234.50 #}
+        Bs. {{ '{:,.0f}'.format(ventas_mes) }}
+      </div>
+      <div class="kpi-label">Ventas del Mes</div>
+      <div class="kpi-change up">
+        <i class="fa-solid fa-arrow-trend-up"></i>
+        +12.5% vs mes anterior
+      </div>
+    </div>
+  </div>
+
+  {# Card 2 — Clientes Activos #}
+  <div class="kpi-card">
+    <div class="kpi-icon purple">
+      <i class="fa-solid fa-users"></i>
+    </div>
+    <div class="kpi-data">
+      <div class="kpi-value">{{ clientes_activos }}</div>
+      <div class="kpi-label">Clientes Activos</div>
+      <div class="kpi-change up">
+        <i class="fa-solid fa-arrow-trend-up"></i>
+        +2 nuevos este mes
+      </div>
+    </div>
+  </div>
+
+  {# Card 3 — Facturas Pendientes de Cobro #}
+  <div class="kpi-card">
+    <div class="kpi-icon yellow">
+      <i class="fa-solid fa-file-invoice"></i>
+    </div>
+    <div class="kpi-data">
+      <div class="kpi-value">{{ facturas_pendientes }}</div>
+      <div class="kpi-label">Facturas Pendientes</div>
+      <div class="kpi-change {% if facturas_pendientes > 5 %}down{% else %}neutral{% endif %}">
+        <i class="fa-solid fa-{% if facturas_pendientes > 5 %}arrow-trend-up{% else %}minus{% endif %}"></i>
+        {% if facturas_pendientes > 5 %}Por encima del promedio{% else %}Dentro del rango normal{% endif %}
+      </div>
+    </div>
+  </div>
+
+  {# Card 4 — Productos con Stock Bajo (alerta roja si hay alguno) #}
+  <div class="kpi-card">
+    <div class="kpi-icon {% if stock_bajo > 0 %}red{% else %}green{% endif %}">
+      <i class="fa-solid fa-box-open"></i>
+    </div>
+    <div class="kpi-data">
+      <div class="kpi-value">{{ stock_bajo }}</div>
+      <div class="kpi-label">Productos Stock Bajo</div>
+      <div class="kpi-change {% if stock_bajo > 0 %}down{% else %}up{% endif %}">
+        <i class="fa-solid fa-{% if stock_bajo > 0 %}triangle-exclamation{% else %}circle-check{% endif %}"></i>
+        {% if stock_bajo > 0 %}
+          {{ stock_bajo }} producto{{ 's' if stock_bajo != 1 }} requieren reposición
+        {% else %}
+          Todo el inventario en niveles normales
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+</div>
+{# Fin KPI cards #}
+
+
+{# ── SECCIÓN 2: Gráficos — Grid 60% / 40% ───────────────────────────────── #}
+<div class="charts-grid" style="margin-bottom: 20px;">
+
+  {# Gráfico izquierdo (60%): Ventas últimos 6 meses — Line + fill #}
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">
+        <i class="fa-solid fa-chart-area"></i>
+        Ventas Últimos 6 Meses
+      </span>
+      {# Selector de período (visual, sin funcionalidad en el prototipo) #}
+      <div style="display:flex; gap:6px;">
+        <button class="btn btn-secondary btn-sm" style="opacity:0.6; cursor:default;">
+          <i class="fa-solid fa-calendar-week"></i> 6 meses
+        </button>
+      </div>
+    </div>
+    <div class="card-body">
+      {# Canvas donde Chart.js dibuja el gráfico de área #}
+      <canvas id="chartVentas" style="max-height: 260px;"></canvas>
+      {# Mensaje mientras cargan los datos #}
+      <p id="loadingVentas" style="text-align:center; color:var(--text-muted);
+         font-size:13px; padding:20px 0;">
+        <i class="fa-solid fa-spinner fa-spin"></i> Cargando datos...
+      </p>
+    </div>
+  </div>
+
+  {# Gráfico derecho (40%): Distribución por módulo ERP — Doughnut #}
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">
+        <i class="fa-solid fa-chart-pie"></i>
+        Distribución por Módulo
+      </span>
+    </div>
+    <div class="card-body" style="display:flex; flex-direction:column;
+         align-items:center; gap:20px;">
+      {# Canvas del doughnut #}
+      <canvas id="chartModulos" style="max-height: 220px; max-width: 220px;"></canvas>
+      {# Leyenda personalizada (se genera dinámicamente desde JS) #}
+      <div id="legendaModulos" style="width:100%; display:flex;
+           flex-direction:column; gap:8px; font-size:13px;"></div>
+    </div>
+  </div>
+
+</div>
+{# Fin sección de gráficos #}
+
+
+{# ── SECCIÓN 3: Tablas de resumen — Grid 60% / 40% ──────────────────────── #}
+<div class="charts-grid">
+
+  {# Tabla izquierda: Últimas 5 Facturas #}
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">
+        <i class="fa-solid fa-file-invoice-dollar"></i>
+        Últimas Facturas
+      </span>
+      <a href="{{ url_for('contabilidad') }}" class="btn btn-secondary btn-sm">
+        Ver todas <i class="fa-solid fa-arrow-right"></i>
+      </a>
+    </div>
+
+    <div class="table-wrapper">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>#Factura</th>
+            <th>Cliente</th>
+            <th>Fecha</th>
+            <th>Monto</th>
+            <th>Estado</th>
+          </tr>
+        </thead>
+        <tbody>
+          {# Iterar sobre las últimas 5 facturas pasadas desde app.py #}
+          {% for f in ultimas_facturas %}
+          <tr>
+            {# Número de factura en color acento #}
+            <td>
+              <span style="color:var(--accent-light); font-weight:600; font-size:13px;">
+                {{ f.numero }}
+              </span>
+            </td>
+
+            {# Nombre del cliente (truncado si es muy largo) #}
+            <td>
+              <span class="cell-title" style="max-width:140px; overflow:hidden;
+                    text-overflow:ellipsis; white-space:nowrap; display:block;">
+                {{ f.cliente_nombre }}
+              </span>
+            </td>
+
+            {# Fecha de emisión formateada #}
+            <td class="text-muted" style="font-size:13px;">
+              {{ f.fecha_emision }}
+            </td>
+
+            {# Monto en Bolivianos #}
+            <td style="font-weight:600; color:var(--text-primary);">
+              Bs. {{ '{:,.2f}'.format(f.total) }}
+            </td>
+
+            {# Badge de estado con color semántico #}
+            <td>
+              {% if f.estado == 'Pagada' %}
+                <span class="badge badge-success">{{ f.estado }}</span>
+              {% elif f.estado == 'Pendiente' %}
+                <span class="badge badge-warning">{{ f.estado }}</span>
+              {% elif f.estado == 'Vencida' %}
+                <span class="badge badge-danger">{{ f.estado }}</span>
+              {% else %}
+                <span class="badge badge-neutral">{{ f.estado }}</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% else %}
+          {# Mensaje si no hay facturas registradas aún #}
+          <tr>
+            <td colspan="5" class="empty-state">
+              <i class="fa-solid fa-file-circle-xmark"></i>
+              <p>No hay facturas registradas aún</p>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {# Fin tabla facturas #}
+
+  {# Tabla derecha: Top 5 Productos más vendidos #}
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">
+        <i class="fa-solid fa-ranking-star"></i>
+        Top Productos
+      </span>
+      <a href="{{ url_for('inventario') }}" class="btn btn-secondary btn-sm">
+        Ver inventario <i class="fa-solid fa-arrow-right"></i>
+      </a>
+    </div>
+
+    <div class="table-wrapper">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Producto</th>
+            <th>Categoría</th>
+            <th>Stock</th>
+            <th>Nivel</th>
+          </tr>
+        </thead>
+        <tbody>
+          {# Calcular el máximo de vendidos para escalar las barras de progreso.
+             top_productos está ordenado DESC por vendidos, así que el primero
+             tiene el mayor valor. Se usa como referencia del 100%. #}
+          {% set max_vendidos = top_productos[0].vendidos if top_productos and top_productos[0].vendidos > 0 else 1 %}
+
+          {% for p in top_productos %}
+          <tr>
+            {# Nombre del producto con elipsis si es muy largo #}
+            <td>
+              <span class="cell-title" style="max-width:120px; overflow:hidden;
+                    text-overflow:ellipsis; white-space:nowrap; display:block;"
+                    title="{{ p.nombre }}">
+                {{ p.nombre }}
+              </span>
+              <span class="cell-sub">{{ p.vendidos }} vendidos</span>
+            </td>
+
+            {# Categoría del producto #}
+            <td>
+              <span class="badge badge-neutral" style="font-size:10px;">
+                {{ p.categoria }}
+              </span>
+            </td>
+
+            {# Stock actual con color según nivel #}
+            <td>
+              <span style="font-weight:600; color:
+                {% if p.stock == 0 %}var(--accent-red)
+                {% elif p.stock < p.stock_minimo %}var(--accent-yellow)
+                {% else %}var(--accent-green){% endif %};">
+                {{ p.stock }}
+              </span>
+            </td>
+
+            {# Barra de progreso proporcional al máximo de vendidos #}
+            <td style="min-width: 80px;">
+              {% set pct = ((p.vendidos / max_vendidos) * 100) | int %}
+              <div class="progress">
+                <div class="progress-bar
+                  {% if pct >= 70 %}bar-green
+                  {% elif pct >= 35 %}bar-yellow
+                  {% else %}bar-red{% endif %}"
+                  style="width: {{ pct }}%;">
+                </div>
+              </div>
+            </td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="4" class="empty-state">
+              <i class="fa-solid fa-box-open"></i>
+              <p>No hay datos de ventas aún</p>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {# Fin tabla top productos #}
+
+</div>
+{# Fin sección de tablas #}
+
+{% endblock %}
+
+
+{# ═══════════════════════════════════════════════════════════════════════════
+   EXTRA_JS — Scripts específicos del dashboard: fetch de datos y Chart.js
+   ═══════════════════════════════════════════════════════════════════════════ #}
+{% block extra_js %}
+<script>
+/* ── Fecha de hoy en el encabezado ──────────────────────────────────────── */
+document.getElementById('fechaHoy').textContent = new Date().toLocaleDateString('es-BO', {
+  weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
+});
+
+
+/* ── Configuración global de Chart.js para tema oscuro ─────────────────── */
+// Sobrescribir los defaults de Chart.js para que todo use la paleta oscura
+Chart.defaults.color          = '#8b8fa8';   // --text-secondary
+Chart.defaults.borderColor    = '#2a2d45';   // --border
+Chart.defaults.font.family    = "'Inter', sans-serif";
+Chart.defaults.font.size      = 12;
+
+
+/* ── Paleta de colores del sistema (deben coincidir con style.css) ──────── */
+const COLORS = {
+  accent:        '#6c63ff',
+  accentLight:   '#8b85ff',
+  accentGreen:   '#00d4aa',
+  accentRed:     '#ff4757',
+  accentYellow:  '#ffa502',
+  accentBlue:    '#1e90ff',
+  bgCard:        '#1e2235',
+  border:        '#2a2d45',
+  textSecondary: '#8b8fa8',
+};
+
+
+/* ── Función auxiliar: crear degradado vertical para el área del gráfico ── */
+function crearGradienteArea(ctx, colorHex) {
+  const gradiente = ctx.createLinearGradient(0, 0, 0, 300);
+  gradiente.addColorStop(0,   colorHex + '55');  // 33% opacidad arriba
+  gradiente.addColorStop(0.7, colorHex + '15');  // casi transparente a 70%
+  gradiente.addColorStop(1,   colorHex + '00');  // totalmente transparente abajo
+  return gradiente;
+}
+
+
+/* ── Variables para las instancias de los gráficos (referencias globales) ─ */
+let chartVentas  = null;
+let chartModulos = null;
+
+
+/* ══════════════════════════════════════════════════════════════════════════
+   FETCH a /api/dashboard-data → alimenta ambos gráficos con datos reales
+   ══════════════════════════════════════════════════════════════════════════ */
+fetch('/api/dashboard-data')
+  .then(resp => {
+    if (!resp.ok) throw new Error('Error al obtener datos del dashboard');
+    return resp.json();
+  })
+  .then(data => {
+    // Ocultar el mensaje de "Cargando..." una vez que llegan los datos
+    const loadingEl = document.getElementById('loadingVentas');
+    if (loadingEl) loadingEl.style.display = 'none';
+
+    // Renderizar los dos gráficos con los datos recibidos
+    renderizarGraficoVentas(data.etiquetas_meses, data.ventas_6meses);
+    renderizarGraficoModulos(data.distribucion_labels, data.distribucion_valores);
+  })
+  .catch(err => {
+    console.error('Dashboard data error:', err);
+    const loadingEl = document.getElementById('loadingVentas');
+    if (loadingEl) {
+      loadingEl.innerHTML =
+        '<i class="fa-solid fa-triangle-exclamation" style="color:var(--accent-yellow)"></i>' +
+        ' No se pudieron cargar los datos del gráfico.';
+    }
+  });
+
+
+/* ══════════════════════════════════════════════════════════════════════════
+   GRÁFICO 1 — Ventas últimos 6 meses (Line con área rellena)
+   ══════════════════════════════════════════════════════════════════════════ */
+function renderizarGraficoVentas(etiquetas, valores) {
+  const canvas = document.getElementById('chartVentas');
+  if (!canvas) return;
+
+  const ctx = canvas.getContext('2d');
+
+  // Crear el degradado de fondo del área (de morado a transparente)
+  const gradienteArea = crearGradienteArea(ctx, COLORS.accent);
+
+  chartVentas = new Chart(ctx, {
+    type: 'line',
+
+    data: {
+      labels: etiquetas,   // Nombres de los 6 meses (ej: ['Dic','Ene','Feb'...])
+      datasets: [{
+        label: 'Ventas (Bs.)',
+        data: valores,
+        // Relleno degradado bajo la línea
+        fill: true,
+        backgroundColor: gradienteArea,
+        // Línea principal
+        borderColor: COLORS.accent,
+        borderWidth: 2.5,
+        // Puntos en cada dato
+        pointBackgroundColor: COLORS.accent,
+        pointBorderColor: COLORS.bgCard,
+        pointBorderWidth: 2,
+        pointRadius: 5,
+        pointHoverRadius: 7,
+        pointHoverBackgroundColor: COLORS.accentLight,
+        // Curva suave entre puntos
+        tension: 0.4,
+      }]
+    },
+
+    options: {
+      responsive: true,
+      maintainAspectRatio: true,
+
+      // Sin borde exterior del gráfico
+      plugins: {
+        legend: { display: false },   // Leyenda propia en el HTML
+
+        // ── Tooltip personalizado en Bolivianos ──────────────────────────
+        tooltip: {
+          backgroundColor: '#1e2235',
+          borderColor: '#2a2d45',
+          borderWidth: 1,
+          titleColor: '#e8e8f0',
+          bodyColor: '#8b8fa8',
+          padding: 12,
+          cornerRadius: 8,
+          displayColors: false,
+          callbacks: {
+            // Formato del valor: Bs. 1,234.50
+            label: function(context) {
+              const valor = context.parsed.y;
+              return ' Bs. ' + valor.toLocaleString('es-BO', {
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2
+              });
+            },
+            title: function(context) {
+              return 'Ventas ' + context[0].label;
+            }
+          }
+        }
+      },
+
+      scales: {
+        x: {
+          grid: {
+            color: COLORS.border,
+            drawBorder: false,
+          },
+          ticks: {
+            color: COLORS.textSecondary,
+            font: { size: 12 }
+          }
+        },
+        y: {
+          grid: {
+            color: COLORS.border,
+            drawBorder: false,
+          },
+          ticks: {
+            color: COLORS.textSecondary,
+            font: { size: 11 },
+            // Formato del eje Y en Bolivianos abreviado
+            callback: function(valor) {
+              if (valor >= 1000) {
+                return 'Bs. ' + (valor / 1000).toFixed(0) + 'K';
+              }
+              return 'Bs. ' + valor;
+            }
+          },
+          beginAtZero: true,
+        }
+      },
+
+      interaction: {
+        mode: 'index',
+        intersect: false,
+      }
+    }
+  });
+}
+
+
+/* ══════════════════════════════════════════════════════════════════════════
+   GRÁFICO 2 — Distribución por módulo ERP (Doughnut)
+   ══════════════════════════════════════════════════════════════════════════ */
+function renderizarGraficoModulos(etiquetas, valores) {
+  const canvas = document.getElementById('chartModulos');
+  if (!canvas) return;
+
+  // Colores asignados a cada módulo (orden debe coincidir con los datos)
+  const coloresModulos = [
+    COLORS.accent,        // Ventas → morado
+    COLORS.accentGreen,   // Manufactura → verde
+    COLORS.accentBlue,    // Distribución → azul
+    COLORS.accentYellow,  // Servicios → amarillo
+  ];
+
+  chartModulos = new Chart(canvas.getContext('2d'), {
+    type: 'doughnut',
+
+    data: {
+      labels: etiquetas,
+      datasets: [{
+        data: valores,
+        backgroundColor: coloresModulos.map(c => c + 'cc'),  // 80% opacidad
+        borderColor: coloresModulos,
+        borderWidth: 2,
+        hoverBackgroundColor: coloresModulos,
+        hoverOffset: 6,
+      }]
+    },
+
+    options: {
+      responsive: true,
+      maintainAspectRatio: true,
+      cutout: '65%',   // Grosor del anillo (mayor = más delgado)
+
+      plugins: {
+        legend: { display: false },  // Leyenda personalizada en HTML
+
+        tooltip: {
+          backgroundColor: '#1e2235',
+          borderColor: '#2a2d45',
+          borderWidth: 1,
+          titleColor: '#e8e8f0',
+          bodyColor: '#8b8fa8',
+          padding: 12,
+          cornerRadius: 8,
+          callbacks: {
+            label: function(context) {
+              return '  ' + context.label + ': ' + context.parsed + '%';
+            }
+          }
+        }
+      }
+    }
+  });
+
+  // ── Generar leyenda personalizada bajo el gráfico ───────────────────────
+  const contenedorLeyenda = document.getElementById('legendaModulos');
+  if (contenedorLeyenda && etiquetas.length > 0) {
+    etiquetas.forEach((etiqueta, i) => {
+      const color = coloresModulos[i] || '#888';
+      const valor = valores[i] || 0;
+
+      const fila = document.createElement('div');
+      fila.style.cssText = 'display:flex; align-items:center; gap:10px;';
+      fila.innerHTML = `
+        <!-- Punto de color de la leyenda -->
+        <span style="
+          width: 10px; height: 10px; border-radius: 50%;
+          background: ${color}; flex-shrink: 0;">
+        </span>
+        <!-- Nombre del módulo -->
+        <span style="flex:1; color:var(--text-secondary);">${etiqueta}</span>
+        <!-- Porcentaje -->
+        <span style="font-weight:600; color:var(--text-primary);">${valor}%</span>
+        <!-- Mini barra de progreso -->
+        <div style="width:60px; height:4px; background:var(--border);
+             border-radius:2px; overflow:hidden;">
+          <div style="width:${valor}%; height:100%; background:${color};
+               border-radius:2px;"></div>
+        </div>
+      `;
+      contenedorLeyenda.appendChild(fila);
+    });
+  }
+}
+</script>
+{% endblock %}

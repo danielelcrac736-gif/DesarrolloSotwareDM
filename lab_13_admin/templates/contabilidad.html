@@ -1,0 +1,811 @@
+{% extends "base.html" %}
+{# ============================================================================
+   contabilidad.html — Módulo de Contabilidad: facturas, gastos y balance
+   Extiende base.html.
+
+   Variables recibidas desde app.py (ruta GET /contabilidad):
+     facturas → list : facturas con datos del cliente
+                       (id, numero, cliente_nombre, fecha_emision,
+                        fecha_vencimiento, total, estado)
+     gastos   → list : gastos (id, concepto, categoria, monto, fecha,
+                        descripcion)
+     stats    → Row/dict : total_facturado, total_cobrado, total_pendiente,
+                            total_vencido, ingresos_mes, egresos_mes
+   ============================================================================ #}
+
+{% block page_title %}Contabilidad{% endblock %}
+{% block nav_title %}<i class="fa-solid fa-file-invoice-dollar page-icon"></i> Contabilidad{% endblock %}
+
+{% block content %}
+
+{# ── Cabecera de página: título + botón "Nueva Factura" ───────────────────── #}
+<div class="page-header">
+  <div class="page-header-left">
+    <h2>Módulo de Contabilidad</h2>
+    <p>Gestión de facturas, gastos y balance financiero</p>
+  </div>
+  <div class="page-header-actions">
+    <a href="{{ url_for('nueva_factura') }}" class="btn btn-primary">
+      <i class="fa-solid fa-file-circle-plus"></i>
+      Nueva Factura
+    </a>
+  </div>
+</div>
+
+
+{# ── 4 Stat-cards: totales calculados en app.py y pasados como stats ─────── #}
+<div style="display:grid; grid-template-columns:repeat(4,1fr); gap:18px;
+            margin-bottom:24px;">
+
+  {# Card 1: Suma de todos los totales de facturas #}
+  <div class="stat-card" style="animation-delay:0.05s;">
+    <span class="stat-label">
+      <i class="fa-solid fa-file-invoice"></i> Total Facturado
+    </span>
+    <span class="stat-value" style="font-size:18px;">
+      Bs. {{ '{:,.2f}'.format(stats.total_facturado or 0) }}
+    </span>
+    <span class="stat-sub">Todas las facturas</span>
+  </div>
+
+  {# Card 2: Suma de facturas con estado "Pagada" #}
+  <div class="stat-card" style="animation-delay:0.10s;">
+    <span class="stat-label">
+      <i class="fa-solid fa-circle-check"></i> Total Cobrado
+    </span>
+    <span class="stat-value green" style="font-size:18px;">
+      Bs. {{ '{:,.2f}'.format(stats.total_cobrado or 0) }}
+    </span>
+    <span class="stat-sub">Facturas pagadas</span>
+  </div>
+
+  {# Card 3: Suma de facturas con estado "Pendiente" #}
+  <div class="stat-card" style="animation-delay:0.15s;">
+    <span class="stat-label">
+      <i class="fa-solid fa-clock"></i> Total Pendiente
+    </span>
+    <span class="stat-value yellow" style="font-size:18px;">
+      Bs. {{ '{:,.2f}'.format(stats.total_pendiente or 0) }}
+    </span>
+    <span class="stat-sub">Facturas por cobrar</span>
+  </div>
+
+  {# Card 4: Suma de facturas con estado "Vencida" #}
+  <div class="stat-card" style="animation-delay:0.20s;">
+    <span class="stat-label">
+      <i class="fa-solid fa-triangle-exclamation"></i> Total Vencido
+    </span>
+    <span class="stat-value red" style="font-size:18px;">
+      Bs. {{ '{:,.2f}'.format(stats.total_vencido or 0) }}
+    </span>
+    <span class="stat-sub">Facturas vencidas</span>
+  </div>
+
+</div>
+{# Fin stat-cards #}
+
+
+{# ── Card principal con sistema de 3 tabs ────────────────────────────────── #}
+<div class="card">
+
+  {# ── Barra de botones de tab ──────────────────────────────────────────── #}
+  <div style="display:flex; gap:0; border-bottom:1px solid var(--border);
+              padding:0 24px;">
+
+    {# Tab 1: Facturas (activo por defecto al cargar) #}
+    <button class="tab-btn tab-activo" id="btnTab-facturas"
+            onclick="cambiarTab('facturas')">
+      <i class="fa-solid fa-file-invoice"></i>
+      Facturas
+      <span class="tab-count">{{ facturas | length }}</span>
+    </button>
+
+    {# Tab 2: Gastos #}
+    <button class="tab-btn" id="btnTab-gastos"
+            onclick="cambiarTab('gastos')">
+      <i class="fa-solid fa-receipt"></i>
+      Gastos
+      <span class="tab-count">{{ gastos | length }}</span>
+    </button>
+
+    {# Tab 3: Balance mensual #}
+    <button class="tab-btn" id="btnTab-balance"
+            onclick="cambiarTab('balance')">
+      <i class="fa-solid fa-scale-balanced"></i>
+      Balance
+    </button>
+
+  </div>
+  {# Fin barra de tabs #}
+
+
+  {# ════════════════════════════════════════════════════════════════════════
+     TAB 1 — FACTURAS
+     Filtros por número/cliente y por estado + tabla completa con acciones
+     ════════════════════════════════════════════════════════════════════════ #}
+  <div id="tab-facturas" class="tab-panel">
+
+    {# ── Filtros de búsqueda ──────────────────────────────────────────────── #}
+    <div class="card-header" style="border-top:none;">
+      <span class="card-title">
+        <i class="fa-solid fa-list-check"></i> Listado de Facturas
+      </span>
+      <div class="filters-row">
+
+        {# Buscador por número de factura o nombre del cliente #}
+        <div class="input-with-icon" style="min-width:240px;">
+          <span class="input-icon"><i class="fa-solid fa-magnifying-glass"></i></span>
+          <input
+            type="text"
+            id="buscadorFacturas"
+            class="form-control"
+            placeholder="Buscar por número o cliente..."
+            oninput="filtrarFacturas()"
+          />
+        </div>
+
+        {# Filtro por estado: Todos / Pagada / Pendiente / Vencida #}
+        <select id="filtroEstadoFactura" class="form-control" style="min-width:160px;"
+                onchange="filtrarFacturas()">
+          <option value="">Todos los estados</option>
+          <option value="Pagada">Pagada</option>
+          <option value="Pendiente">Pendiente</option>
+          <option value="Vencida">Vencida</option>
+        </select>
+
+      </div>
+    </div>
+    {# Fin filtros #}
+
+    {# ── Tabla de facturas ────────────────────────────────────────────────── #}
+    <div class="table-wrapper">
+      <table class="table" id="tablaFacturas">
+
+        <thead>
+          <tr>
+            <th>#Factura</th>
+            <th>Cliente</th>
+            <th class="hide-mobile">Fecha Emisión</th>
+            <th class="hide-mobile">Fecha Vencimiento</th>
+            <th>Monto Bs.</th>
+            <th>Estado</th>
+            <th>Acciones</th>
+          </tr>
+        </thead>
+
+        <tbody id="cuerpoTablaFacturas">
+          {% for f in facturas %}
+
+          {# ── Badge de estado según valor de la factura ─────────────────── #}
+          {% if f.estado == 'Pagada' %}
+            {% set badge_class = 'badge-success' %}
+          {% elif f.estado == 'Vencida' %}
+            {% set badge_class = 'badge-danger' %}
+          {% else %}
+            {% set badge_class = 'badge-warning' %}
+          {% endif %}
+
+          {# Fila con fondo rojizo suave si el estado es Vencida #}
+          <tr class="fila-factura"
+              data-numero="{{ (f.numero or '') | lower }}"
+              data-cliente="{{ (f.cliente_nombre or '') | lower }}"
+              data-estado="{{ f.estado }}"
+              {% if f.estado == 'Vencida' %}
+                style="background-color:rgba(255,71,87,0.06);"
+              {% endif %}>
+
+            {# Número de factura en tipografía monoespaciada #}
+            <td>
+              <span style="font-family:monospace; font-size:13px;
+                           color:var(--accent-light); font-weight:600;">
+                {{ f.numero }}
+              </span>
+            </td>
+
+            {# Nombre del cliente #}
+            <td>
+              <div class="cell-title">{{ f.cliente_nombre or '—' }}</div>
+            </td>
+
+            {# Fecha de emisión #}
+            <td class="hide-mobile"
+                style="font-size:13px; color:var(--text-secondary);">
+              {{ f.fecha_emision }}
+            </td>
+
+            {# Fecha de vencimiento — texto rojo con ícono si está Vencida #}
+            <td class="hide-mobile">
+              <span style="font-size:13px;
+                {% if f.estado == 'Vencida' %}
+                  color:var(--accent-red); font-weight:600;
+                {% else %}
+                  color:var(--text-secondary);
+                {% endif %}">
+                {{ f.fecha_vencimiento }}
+                {% if f.estado == 'Vencida' %}
+                  <i class="fa-solid fa-circle-exclamation"
+                     style="font-size:11px; margin-left:3px;"></i>
+                {% endif %}
+              </span>
+            </td>
+
+            {# Monto total de la factura #}
+            <td style="font-weight:700; color:var(--text-primary);">
+              Bs. {{ '{:,.2f}'.format(f.total) }}
+            </td>
+
+            {# Badge de estado con color semántico #}
+            <td>
+              <span class="badge {{ badge_class }}" id="badge-{{ f.id }}">
+                {{ f.estado }}
+              </span>
+            </td>
+
+            {# Botones de acción: Marcar Pagada + Ver PDF #}
+            <td>
+              <div class="actions-cell">
+
+                {# "Marcar Pagada": solo habilitado si la factura no está Pagada #}
+                {% if f.estado != 'Pagada' %}
+                  <button
+                    class="btn btn-icon"
+                    title="Marcar como Pagada"
+                    id="btnPagar-{{ f.id }}"
+                    onclick="marcarPagada({{ f.id }}, this)"
+                    style="color:var(--accent-green);">
+                    <i class="fa-solid fa-circle-check"></i>
+                  </button>
+                {% else %}
+                  {# Botón visual deshabilitado si ya fue pagada #}
+                  <button class="btn btn-icon" disabled title="Ya fue pagada"
+                          style="opacity:0.3; cursor:not-allowed;">
+                    <i class="fa-solid fa-circle-check"></i>
+                  </button>
+                {% endif %}
+
+                {# "Ver PDF": simulado con alert para la defensa #}
+                <button
+                  class="btn btn-icon"
+                  title="Ver / Descargar PDF"
+                  onclick="simularPDF('{{ f.numero }}')"
+                  style="color:var(--accent-blue);">
+                  <i class="fa-solid fa-file-pdf"></i>
+                </button>
+
+              </div>
+            </td>
+
+          </tr>
+          {% else %}
+          {# Estado vacío cuando no hay facturas registradas #}
+          <tr>
+            <td colspan="7">
+              <div class="empty-state">
+                <i class="fa-solid fa-file-invoice"></i>
+                <p>No hay facturas registradas aún.<br>
+                  <a href="{{ url_for('nueva_factura') }}">
+                    Crear la primera factura
+                  </a>
+                </p>
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+
+      </table>
+    </div>
+    {# Fin tabla facturas #}
+
+    {# Contador de resultados visibles actualizado por filtrarFacturas() #}
+    <div style="padding:12px 24px; border-top:1px solid var(--border);
+                font-size:12px; color:var(--text-muted); text-align:right;">
+      Mostrando <span id="contadorFacturas">{{ facturas | length }}</span>
+      de {{ facturas | length }} facturas
+    </div>
+
+  </div>
+  {# Fin tab-facturas #}
+
+
+  {# ════════════════════════════════════════════════════════════════════════
+     TAB 2 — GASTOS
+     Tabla simple de gastos con badge de categoría y total al pie
+     ════════════════════════════════════════════════════════════════════════ #}
+  <div id="tab-gastos" class="tab-panel" style="display:none;">
+
+    <div class="card-header" style="border-top:none;">
+      <span class="card-title">
+        <i class="fa-solid fa-receipt"></i> Registro de Gastos
+      </span>
+    </div>
+
+    <div class="table-wrapper">
+      <table class="table">
+
+        <thead>
+          <tr>
+            <th>Concepto</th>
+            <th>Categoría</th>
+            <th>Monto Bs.</th>
+            <th class="hide-mobile">Fecha</th>
+            <th class="hide-mobile">Descripción</th>
+          </tr>
+        </thead>
+
+        <tbody>
+          {% for g in gastos %}
+          <tr>
+
+            {# Nombre del gasto #}
+            <td>
+              <div class="cell-title">{{ g.concepto }}</div>
+            </td>
+
+            {# Badge de categoría con color según tipo de gasto #}
+            <td>
+              {% if g.categoria == 'Administrativo' %}
+                <span class="badge badge-info">{{ g.categoria }}</span>
+              {% elif g.categoria == 'Operativo' %}
+                <span class="badge badge-warning">{{ g.categoria }}</span>
+              {% elif g.categoria == 'Servicios' %}
+                <span class="badge"
+                      style="background:rgba(108,99,255,0.12);
+                             color:var(--accent-light);
+                             border:1px solid rgba(108,99,255,0.25);">
+                  {{ g.categoria }}
+                </span>
+              {% elif g.categoria == 'Personal' %}
+                <span class="badge badge-success">{{ g.categoria }}</span>
+              {% else %}
+                <span class="badge badge-neutral">{{ g.categoria }}</span>
+              {% endif %}
+            </td>
+
+            {# Monto del gasto en rojo para señalar que es un egreso #}
+            <td style="font-weight:700; color:var(--accent-red);">
+              Bs. {{ '{:,.2f}'.format(g.monto) }}
+            </td>
+
+            <td class="hide-mobile"
+                style="font-size:13px; color:var(--text-secondary);">
+              {{ g.fecha }}
+            </td>
+
+            {# Descripción truncada con tooltip para el texto completo #}
+            <td class="hide-mobile"
+                style="font-size:13px; color:var(--text-muted);
+                       max-width:200px; white-space:nowrap;
+                       overflow:hidden; text-overflow:ellipsis;"
+                title="{{ g.descripcion or '' }}">
+              {{ g.descripcion or '—' }}
+            </td>
+
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="5">
+              <div class="empty-state">
+                <i class="fa-solid fa-receipt"></i>
+                <p>No hay gastos registrados.</p>
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+
+        {# Fila de total al pie, solo si hay gastos #}
+        {% if gastos %}
+        <tfoot>
+          <tr style="background:var(--bg-hover);">
+            <td colspan="2"
+                style="font-weight:700; color:var(--text-primary); padding-left:24px;">
+              Total de Gastos
+            </td>
+            <td style="font-weight:800; color:var(--accent-red); font-size:15px;">
+              {# Suma de todos los gastos calculada con filtro Jinja2 #}
+              Bs. {{ '{:,.2f}'.format(gastos | sum(attribute='monto')) }}
+            </td>
+            <td colspan="2"></td>
+          </tr>
+        </tfoot>
+        {% endif %}
+
+      </table>
+    </div>
+    {# Fin tabla gastos #}
+
+  </div>
+  {# Fin tab-gastos #}
+
+
+  {# ════════════════════════════════════════════════════════════════════════
+     TAB 3 — BALANCE
+     Resumen del mes actual (datos de app.py) +
+     tabla mensual de los últimos 6 meses (valores hardcodeados de ejemplo)
+     ════════════════════════════════════════════════════════════════════════ #}
+  <div id="tab-balance" class="tab-panel" style="display:none;">
+
+    <div style="padding:24px;">
+
+      {# ── Card resumen del mes actual ────────────────────────────────────── #}
+      <h3 style="font-size:13px; font-weight:600; text-transform:uppercase;
+                  letter-spacing:0.8px; color:var(--text-muted); margin-bottom:16px;">
+        <i class="fa-solid fa-calendar-day"></i>&nbsp; Resumen del Mes Actual
+      </h3>
+
+      <div style="display:grid; grid-template-columns:repeat(3,1fr);
+                  gap:18px; margin-bottom:32px;">
+
+        {# Ingresos del mes: facturas Pagadas este mes, calculado en app.py #}
+        <div style="background:rgba(0,212,170,0.08);
+                    border:1px solid rgba(0,212,170,0.2);
+                    border-radius:12px; padding:20px; text-align:center;">
+          <div style="font-size:12px; font-weight:600; text-transform:uppercase;
+                      letter-spacing:0.8px; color:var(--accent-green);
+                      margin-bottom:8px;">
+            <i class="fa-solid fa-arrow-trend-up"></i>&nbsp; Ingresos del Mes
+          </div>
+          <div style="font-size:22px; font-weight:800; color:var(--accent-green);">
+            Bs. {{ '{:,.2f}'.format(stats.ingresos_mes or 0) }}
+          </div>
+          <div style="font-size:12px; color:var(--text-muted); margin-top:4px;">
+            Facturas pagadas este mes
+          </div>
+        </div>
+
+        {# Egresos del mes: gastos del mes actual, calculado en app.py #}
+        <div style="background:rgba(255,71,87,0.08);
+                    border:1px solid rgba(255,71,87,0.2);
+                    border-radius:12px; padding:20px; text-align:center;">
+          <div style="font-size:12px; font-weight:600; text-transform:uppercase;
+                      letter-spacing:0.8px; color:var(--accent-red);
+                      margin-bottom:8px;">
+            <i class="fa-solid fa-arrow-trend-down"></i>&nbsp; Egresos del Mes
+          </div>
+          <div style="font-size:22px; font-weight:800; color:var(--accent-red);">
+            Bs. {{ '{:,.2f}'.format(stats.egresos_mes or 0) }}
+          </div>
+          <div style="font-size:12px; color:var(--text-muted); margin-top:4px;">
+            Gastos registrados este mes
+          </div>
+        </div>
+
+        {# Resultado = Ingresos - Egresos; verde si positivo, rojo si negativo #}
+        {% set resultado_mes = stats.ingresos_mes - stats.egresos_mes %}
+        <div style="background:{% if resultado_mes >= 0 %}rgba(0,212,170,0.08){% else %}rgba(255,71,87,0.08){% endif %};
+                    border:1px solid {% if resultado_mes >= 0 %}rgba(0,212,170,0.2){% else %}rgba(255,71,87,0.2){% endif %};
+                    border-radius:12px; padding:20px; text-align:center;">
+          <div style="font-size:12px; font-weight:600; text-transform:uppercase;
+                      letter-spacing:0.8px;
+                      color:{% if resultado_mes >= 0 %}var(--accent-green){% else %}var(--accent-red){% endif %};
+                      margin-bottom:8px;">
+            <i class="fa-solid fa-{% if resultado_mes >= 0 %}thumbs-up{% else %}thumbs-down{% endif %}"></i>&nbsp;
+            Resultado
+          </div>
+          <div style="font-size:22px; font-weight:800;
+                      color:{% if resultado_mes >= 0 %}var(--accent-green){% else %}var(--accent-red){% endif %};">
+            {% if resultado_mes >= 0 %}+{% endif %}Bs. {{ '{:,.2f}'.format(resultado_mes or 0) }}
+          </div>
+          <div style="font-size:12px; color:var(--text-muted); margin-top:4px;">
+            Ingresos menos egresos del mes
+          </div>
+        </div>
+
+      </div>
+      {# Fin card resumen mes #}
+
+
+      {# ── Tabla mensual: últimos 6 meses con valores ejemplo bolivianos ──── #}
+      {# Datos hardcodeados para demostración en la defensa académica         #}
+      <h3 style="font-size:13px; font-weight:600; text-transform:uppercase;
+                  letter-spacing:0.8px; color:var(--text-muted); margin-bottom:16px;">
+        <i class="fa-solid fa-table"></i>&nbsp; Historial Mensual — Últimos 6 Meses
+      </h3>
+
+      <div class="table-wrapper">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Mes</th>
+              <th>Ingresos</th>
+              <th>Egresos</th>
+              <th>Resultado</th>
+              <th class="hide-mobile">Estado</th>
+            </tr>
+          </thead>
+          <tbody>
+
+            {# Diciembre 2024 — superávit #}
+            <tr>
+              <td style="font-weight:600; color:var(--text-primary);">
+                Diciembre 2024
+              </td>
+              <td style="color:var(--accent-green); font-weight:600;">
+                Bs. 38,500.00
+              </td>
+              <td style="color:var(--accent-red);">Bs. 12,300.00</td>
+              <td style="color:var(--accent-green); font-weight:700;">
+                +Bs. 26,200.00
+              </td>
+              <td class="hide-mobile">
+                <span class="badge badge-success">Superávit</span>
+              </td>
+            </tr>
+
+            {# Enero 2025 — superávit #}
+            <tr>
+              <td style="font-weight:600; color:var(--text-primary);">
+                Enero 2025
+              </td>
+              <td style="color:var(--accent-green); font-weight:600;">
+                Bs. 42,750.00
+              </td>
+              <td style="color:var(--accent-red);">Bs. 15,800.00</td>
+              <td style="color:var(--accent-green); font-weight:700;">
+                +Bs. 26,950.00
+              </td>
+              <td class="hide-mobile">
+                <span class="badge badge-success">Superávit</span>
+              </td>
+            </tr>
+
+            {# Febrero 2025 — superávit #}
+            <tr>
+              <td style="font-weight:600; color:var(--text-primary);">
+                Febrero 2025
+              </td>
+              <td style="color:var(--accent-green); font-weight:600;">
+                Bs. 31,200.00
+              </td>
+              <td style="color:var(--accent-red);">Bs. 18,450.00</td>
+              <td style="color:var(--accent-green); font-weight:700;">
+                +Bs. 12,750.00
+              </td>
+              <td class="hide-mobile">
+                <span class="badge badge-success">Superávit</span>
+              </td>
+            </tr>
+
+            {# Marzo 2025 — mejor mes del período #}
+            <tr>
+              <td style="font-weight:600; color:var(--text-primary);">
+                Marzo 2025
+              </td>
+              <td style="color:var(--accent-green); font-weight:600;">
+                Bs. 55,890.00
+              </td>
+              <td style="color:var(--accent-red);">Bs. 21,600.00</td>
+              <td style="color:var(--accent-green); font-weight:700;">
+                +Bs. 34,290.00
+              </td>
+              <td class="hide-mobile">
+                <span class="badge badge-success">Superávit</span>
+              </td>
+            </tr>
+
+            {# Abril 2025 — déficit (para ilustrar el rojo en la defensa) #}
+            <tr style="background-color:rgba(255,71,87,0.04);">
+              <td style="font-weight:600; color:var(--text-primary);">
+                Abril 2025
+              </td>
+              <td style="color:var(--accent-green); font-weight:600;">
+                Bs. 18,400.00
+              </td>
+              <td style="color:var(--accent-red);">Bs. 25,200.00</td>
+              <td style="color:var(--accent-red); font-weight:700;">
+                -Bs. 6,800.00
+              </td>
+              <td class="hide-mobile">
+                <span class="badge badge-danger">Déficit</span>
+              </td>
+            </tr>
+
+            {# Mayo 2025 — superávit #}
+            <tr>
+              <td style="font-weight:600; color:var(--text-primary);">
+                Mayo 2025
+              </td>
+              <td style="color:var(--accent-green); font-weight:600;">
+                Bs. 47,300.00
+              </td>
+              <td style="color:var(--accent-red);">Bs. 19,750.00</td>
+              <td style="color:var(--accent-green); font-weight:700;">
+                +Bs. 27,550.00
+              </td>
+              <td class="hide-mobile">
+                <span class="badge badge-success">Superávit</span>
+              </td>
+            </tr>
+
+          </tbody>
+
+          {# Fila de totales del período de 6 meses #}
+          <tfoot>
+            <tr style="background:var(--bg-hover);">
+              <td style="font-weight:700; color:var(--text-primary);">
+                Total 6 meses
+              </td>
+              <td style="font-weight:700; color:var(--accent-green);">
+                Bs. 234,040.00
+              </td>
+              <td style="font-weight:700; color:var(--accent-red);">
+                Bs. 113,100.00
+              </td>
+              <td style="font-weight:800; color:var(--accent-green);">
+                +Bs. 120,940.00
+              </td>
+              <td class="hide-mobile">
+                <span class="badge badge-success">Balance Positivo</span>
+              </td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+      {# Fin tabla mensual #}
+
+    </div>
+  </div>
+  {# Fin tab-balance #}
+
+</div>
+{# Fin card principal con tabs #}
+
+{% endblock %}
+
+
+{# ═══════════════════════════════════════════════════════════════════════════
+   EXTRA_JS — Estilos de tabs, lógica de cambio, filtros y acciones de API
+   ═══════════════════════════════════════════════════════════════════════════ #}
+{% block extra_js %}
+
+{# Estilos del sistema de tabs definidos inline porque son específicos de esta página #}
+<style>
+.tab-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 20px;
+  background: transparent;
+  border: none;
+  border-bottom: 3px solid transparent;
+  color: var(--text-secondary);
+  font-family: 'Inter', sans-serif;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  margin-bottom: -1px;
+}
+.tab-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+.tab-btn.tab-activo {
+  color: var(--accent-light);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+.tab-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  background: var(--bg-hover);
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+.tab-activo .tab-count {
+  background: rgba(108,99,255,0.15);
+  color: var(--accent-light);
+}
+</style>
+
+<script>
+
+/* ── cambiarTab(nombre) ──────────────────────────────────────────────────────
+   Muestra únicamente el panel del tab solicitado y marca su botón como activo.
+   Parámetro: nombre → "facturas", "gastos" o "balance"                       */
+function cambiarTab(nombre) {
+  // Ocultar todos los paneles
+  document.querySelectorAll('.tab-panel').forEach(p => p.style.display = 'none');
+  // Quitar estado activo a todos los botones
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('tab-activo'));
+  // Mostrar el panel y activar el botón del tab seleccionado
+  document.getElementById('tab-'    + nombre).style.display = 'block';
+  document.getElementById('btnTab-' + nombre).classList.add('tab-activo');
+}
+
+
+/* ── filtrarFacturas() ───────────────────────────────────────────────────────
+   Filtra las filas de la tabla de facturas combinando texto libre (número o
+   nombre del cliente) y el estado del select.
+   Actualiza el contador de resultados visibles al final.                     */
+function filtrarFacturas() {
+  const texto  = document.getElementById('buscadorFacturas').value.toLowerCase().trim();
+  const estado = document.getElementById('filtroEstadoFactura').value;
+  const filas  = document.querySelectorAll('.fila-factura');
+  let visibles = 0;
+
+  filas.forEach(fila => {
+    // Coincidencia en número de factura o nombre del cliente
+    const coincideTexto = !texto ||
+      fila.dataset.numero.includes(texto) ||
+      fila.dataset.cliente.includes(texto);
+
+    // Coincidencia de estado
+    const coincideEstado = !estado || fila.dataset.estado === estado;
+
+    if (coincideTexto && coincideEstado) {
+      fila.style.display = '';
+      visibles++;
+    } else {
+      fila.style.display = 'none';
+    }
+  });
+
+  const contador = document.getElementById('contadorFacturas');
+  if (contador) contador.textContent = visibles;
+}
+
+
+/* ── marcarPagada(facturaId, btn) ────────────────────────────────────────────
+   Envía POST al endpoint /contabilidad/factura/<id>/pagar sin recargar la página.
+   Si el servidor responde OK, actualiza el badge y desactiva el botón.       */
+function marcarPagada(facturaId, btn) {
+  if (!confirm('¿Marcar esta factura como Pagada?')) return;
+
+  // Indicar carga en el botón mientras espera respuesta
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+
+  fetch(`/contabilidad/factura/${facturaId}/pagar`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' }
+  })
+  .then(res => res.json())
+  .then(data => {
+    if (data.ok) {
+      // Actualizar el badge de estado de la fila
+      const badge = document.getElementById('badge-' + facturaId);
+      if (badge) {
+        badge.className   = 'badge badge-success';
+        badge.textContent = 'Pagada';
+      }
+      // Deshabilitar el botón permanentemente
+      btn.style.opacity = '0.3';
+      btn.style.cursor  = 'not-allowed';
+      btn.title         = 'Ya fue pagada';
+      btn.innerHTML     = '<i class="fa-solid fa-circle-check"></i>';
+      // Quitar fondo rojizo si la fila era Vencida
+      const fila = btn.closest('tr');
+      if (fila) {
+        fila.style.backgroundColor = '';
+        fila.dataset.estado        = 'Pagada';
+      }
+    } else {
+      alert('Error al actualizar: ' + (data.error || 'Error desconocido'));
+      btn.disabled  = false;
+      btn.innerHTML = '<i class="fa-solid fa-circle-check"></i>';
+    }
+  })
+  .catch(() => {
+    alert('Error de conexión. Intenta nuevamente.');
+    btn.disabled  = false;
+    btn.innerHTML = '<i class="fa-solid fa-circle-check"></i>';
+  });
+}
+
+
+/* ── simularPDF(numero) ──────────────────────────────────────────────────────
+   Simulación del botón "Ver PDF" para la defensa del prototipo.             */
+function simularPDF(numero) {
+  alert(`Generando PDF...\n\nFactura: ${numero}\nEl archivo PDF se descargaría automáticamente en un sistema real.`);
+}
+
+</script>
+{% endblock %}

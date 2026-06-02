@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>404 — Página no encontrada · Acumatica ERP</title>
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&display=swap" rel="stylesheet">
+
+  <!-- Font Awesome -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+
+  <style>
+    /* ── Reset & base ────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:           #0f1117;
+      --bg-card:      #1e2235;
+      --accent:       #6c63ff;
+      --accent-glow:  rgba(108, 99, 255, 0.35);
+      --accent-dim:   rgba(108, 99, 255, 0.12);
+      --text:         #e8eaf0;
+      --text-muted:   #8892a4;
+      --border:       #2a2d45;
+    }
+
+    html, body {
+      height: 100%;
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background-color: var(--bg);
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      overflow: hidden;
+      position: relative;
+    }
+
+    /* ── Dot-grid background ─────────────────────────────── */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image: radial-gradient(circle, #2a2d45 1px, transparent 1px);
+      background-size: 28px 28px;
+      opacity: 0.45;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    /* ── Radial glow behind 404 ──────────────────────────── */
+    body::after {
+      content: '';
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -60%);
+      width: 600px;
+      height: 600px;
+      border-radius: 50%;
+      background: radial-gradient(circle, var(--accent-glow) 0%, transparent 70%);
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    /* ── Card container ──────────────────────────────────── */
+    .error-card {
+      position: relative;
+      z-index: 1;
+      text-align: center;
+      padding: 3rem 4rem;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      max-width: 520px;
+      width: 90%;
+      box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5),
+                  0 0 0 1px rgba(108, 99, 255, 0.08);
+      animation: cardIn 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+    }
+
+    /* ── Giant 404 number ────────────────────────────────── */
+    .num-404 {
+      font-size: clamp(7rem, 22vw, 10rem);
+      font-weight: 900;
+      line-height: 1;
+      letter-spacing: -0.04em;
+      color: var(--accent);
+
+      /* Soft glow */
+      text-shadow:
+        0 0 20px  var(--accent-glow),
+        0 0 60px  rgba(108, 99, 255, 0.18),
+        0 0 100px rgba(108, 99, 255, 0.08);
+
+      /* Float + pulse animation */
+      animation: float 3.2s ease-in-out infinite,
+                 pulse 3.2s ease-in-out infinite;
+
+      /* Initial entrance */
+      opacity: 0;
+      animation: numIn 0.7s 0.15s cubic-bezier(0.34, 1.56, 0.64, 1) forwards,
+                 float 3.2s 0.85s ease-in-out infinite,
+                 pulse 3.2s 0.85s ease-in-out infinite;
+      display: block;
+      user-select: none;
+    }
+
+    /* Glitch-style strikethrough bar */
+    .num-404::before {
+      content: '404';
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%);
+      color: var(--accent);
+      clip-path: polygon(0 45%, 100% 42%, 100% 55%, 0 58%);
+      opacity: 0.18;
+      filter: blur(2px);
+      pointer-events: none;
+    }
+
+    .num-wrapper {
+      position: relative;
+      display: flex;
+      justify-content: center;
+      margin-bottom: 0.25rem;
+    }
+
+    /* Divider line */
+    .divider {
+      width: 48px;
+      height: 3px;
+      background: linear-gradient(90deg, transparent, var(--accent), transparent);
+      border-radius: 2px;
+      margin: 1.25rem auto 1.5rem;
+      animation: shimmer 2.5s ease-in-out infinite;
+    }
+
+    /* ── Text ────────────────────────────────────────────── */
+    .error-title {
+      font-size: 1.45rem;
+      font-weight: 700;
+      color: var(--text);
+      margin-bottom: 0.6rem;
+    }
+
+    .error-desc {
+      font-size: 0.95rem;
+      color: var(--text-muted);
+      line-height: 1.6;
+      margin-bottom: 2rem;
+    }
+
+    /* ── Button ──────────────────────────────────────────── */
+    .btn-home {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.55rem;
+      padding: 0.72rem 1.75rem;
+      background: var(--accent);
+      color: #fff;
+      font-family: 'Inter', sans-serif;
+      font-size: 0.95rem;
+      font-weight: 600;
+      text-decoration: none;
+      border-radius: 10px;
+      border: none;
+      cursor: pointer;
+      transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+      box-shadow: 0 4px 20px rgba(108, 99, 255, 0.4);
+    }
+
+    .btn-home:hover {
+      background: #7d75ff;
+      transform: translateY(-2px);
+      box-shadow: 0 8px 28px rgba(108, 99, 255, 0.55);
+    }
+
+    .btn-home:active {
+      transform: translateY(0);
+      box-shadow: 0 3px 12px rgba(108, 99, 255, 0.35);
+    }
+
+    .btn-home i {
+      font-size: 0.9rem;
+    }
+
+    /* ── Small code path hint ────────────────────────────── */
+    .error-path {
+      margin-top: 1.5rem;
+      font-size: 0.78rem;
+      color: var(--border);
+      font-family: 'Courier New', monospace;
+      letter-spacing: 0.02em;
+    }
+
+    /* ── Keyframes ───────────────────────────────────────── */
+    @keyframes cardIn {
+      from { opacity: 0; transform: translateY(32px) scale(0.96); }
+      to   { opacity: 1; transform: translateY(0)   scale(1);     }
+    }
+
+    @keyframes numIn {
+      from { opacity: 0; transform: scale(0.7) translateY(20px); }
+      to   { opacity: 1; transform: scale(1)   translateY(0);    }
+    }
+
+    @keyframes float {
+      0%, 100% { transform: translateY(0);    }
+      50%       { transform: translateY(-8px); }
+    }
+
+    @keyframes pulse {
+      0%, 100% { text-shadow: 0 0 20px var(--accent-glow), 0 0 60px rgba(108,99,255,.18), 0 0 100px rgba(108,99,255,.08); }
+      50%       { text-shadow: 0 0 30px rgba(108,99,255,.7), 0 0 80px rgba(108,99,255,.28), 0 0 120px rgba(108,99,255,.12); }
+    }
+
+    @keyframes shimmer {
+      0%, 100% { opacity: 0.5; width: 48px; }
+      50%       { opacity: 1;   width: 72px; }
+    }
+
+    /* ── Responsive ──────────────────────────────────────── */
+    @media (max-width: 480px) {
+      .error-card { padding: 2rem 1.75rem; }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="error-card">
+
+    <div class="num-wrapper">
+      <span class="num-404">404</span>
+    </div>
+
+    <div class="divider"></div>
+
+    <h1 class="error-title">Página no encontrada</h1>
+    <p class="error-desc">
+      La página que buscas no existe o fue movida.<br>
+      Verifica la URL o regresa al dashboard.
+    </p>
+
+    <a href="/" class="btn-home">
+      <i class="fa-solid fa-house"></i>
+      Volver al Dashboard
+    </a>
+
+    <p class="error-path">HTTP 404 · Acumatica ERP Prototipo · SIS-315 USFX 2025</p>
+
+  </div>
+
+</body>
+</html>

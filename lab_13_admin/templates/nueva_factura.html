@@ -1,0 +1,461 @@
+{% extends "base.html" %}
+{# ============================================================================
+   nueva_factura.html — Formulario para crear una nueva factura con ítems
+   Extiende base.html.
+
+   Variables recibidas desde app.py (ruta GET /contabilidad/nueva-factura):
+     clientes     → list : clientes activos (id, nombre, empresa)
+     productos    → list : productos activos (id, nombre, precio_unitario, unidad)
+     num_factura  → str  : número auto-generado (ej: "FAC-2025-016")
+     today        → str  : fecha de hoy en formato YYYY-MM-DD
+     fecha_vencimiento → str : hoy + 30 días en formato YYYY-MM-DD
+   ============================================================================ #}
+
+{% block page_title %}Nueva Factura{% endblock %}
+{% block nav_title %}<i class="fa-solid fa-file-circle-plus page-icon"></i> Nueva Factura{% endblock %}
+
+{% block content %}
+
+{# ── Cabecera con número de factura auto-generado visible ─────────────────── #}
+<div class="page-header">
+  <div class="page-header-left">
+    <h2>Nueva Factura</h2>
+    <p>
+      Completá los datos y los ítems
+      &nbsp;·&nbsp; Número:
+      <span style="font-family:monospace; color:var(--accent-light);
+                   font-weight:700; font-size:15px; letter-spacing:0.5px;">
+        {{ num_factura }}
+      </span>
+    </p>
+  </div>
+  <div class="page-header-actions">
+    <a href="{{ url_for('contabilidad') }}" class="btn btn-secondary">
+      <i class="fa-solid fa-arrow-left"></i> Volver
+    </a>
+  </div>
+</div>
+
+
+{# ── Formulario principal POST a /contabilidad/nueva-factura ─────────────── #}
+<form action="{{ url_for('nueva_factura') }}" method="POST" id="formNuevaFactura">
+
+  {# Campo oculto: número de ítems — JS lo mantiene actualizado en todo momento #}
+  <input type="hidden" name="num_items" id="numItems" value="0" />
+
+  {# Campo oculto: número de factura pre-generado para que app.py lo use #}
+  <input type="hidden" name="numero" value="{{ num_factura }}" />
+
+
+  {# ══════════════════════════════════════════════════════════════════════════
+     SECCIÓN 1 — Datos generales de la factura (grid 2 columnas)
+     ══════════════════════════════════════════════════════════════════════════ #}
+  <div class="card" style="margin-bottom:20px;">
+
+    <div class="card-header">
+      <span class="card-title">
+        <i class="fa-solid fa-circle-info"></i> Datos Generales
+      </span>
+    </div>
+
+    <div style="padding:20px 24px;">
+
+      {# Fila 1: Cliente + Descuento #}
+      <div class="form-grid-2">
+
+        {# Select de cliente — opciones cargadas desde la variable clientes #}
+        <div class="form-group">
+          <label class="form-label required">Cliente</label>
+          <select name="cliente_id" class="form-control" required>
+            <option value="">— Seleccionar cliente —</option>
+            {% for c in clientes %}
+              <option value="{{ c.id }}">
+                {{ c.nombre }}{% if c.empresa %} · {{ c.empresa }}{% endif %}
+              </option>
+            {% endfor %}
+          </select>
+        </div>
+
+        {# Descuento en porcentaje sobre el subtotal total #}
+        <div class="form-group">
+          <label class="form-label">Descuento (%)</label>
+          <input
+            type="number"
+            name="descuento"
+            id="inputDescuento"
+            class="form-control"
+            value="0"
+            min="0"
+            max="100"
+            step="0.01"
+            oninput="recalcularTotales()"
+          />
+          <span class="form-help">Porcentaje aplicado sobre el subtotal</span>
+        </div>
+
+      </div>
+
+      {# Fila 2: Fecha de emisión + Fecha de vencimiento #}
+      <div class="form-grid-2">
+
+        {# Fecha de emisión: default = hoy (pasado desde app.py como today) #}
+        <div class="form-group">
+          <label class="form-label required">Fecha de Emisión</label>
+          <input
+            type="date"
+            name="fecha_emision"
+            id="fechaEmision"
+            class="form-control"
+            value="{{ today }}"
+            required
+          />
+        </div>
+
+        {# Fecha de vencimiento: default = hoy + 30 días #}
+        <div class="form-group">
+          <label class="form-label required">Fecha de Vencimiento</label>
+          <input
+            type="date"
+            name="fecha_vencimiento"
+            id="fechaVencimiento"
+            class="form-control"
+            value="{{ fecha_vencimiento }}"
+            required
+          />
+          <span class="form-help">Por defecto 30 días desde la emisión</span>
+        </div>
+
+      </div>
+
+      {# Notas / observaciones opcionales de la factura #}
+      <div class="form-group">
+        <label class="form-label">Notas / Observaciones</label>
+        <textarea
+          name="notas"
+          class="form-control"
+          rows="2"
+          placeholder="Condiciones de pago, instrucciones especiales, observaciones..."
+        ></textarea>
+      </div>
+
+    </div>
+  </div>
+  {# Fin sección 1 #}
+
+
+  {# ══════════════════════════════════════════════════════════════════════════
+     SECCIÓN 2 — Ítems de la Factura
+     Tabla dinámica: JS agrega/elimina filas con índice incremental.
+     Nombres de inputs: producto_id_N, cantidad_N, precio_N (N = 1, 2, 3…)
+     ══════════════════════════════════════════════════════════════════════════ #}
+  <div class="card" style="margin-bottom:20px;">
+
+    <div class="card-header">
+      <span class="card-title">
+        <i class="fa-solid fa-list"></i> Ítems de la Factura
+      </span>
+      {# Botón para agregar una nueva fila de producto #}
+      <button type="button" class="btn btn-primary"
+              onclick="agregarFila()"
+              style="padding:8px 16px; font-size:13px;">
+        <i class="fa-solid fa-plus"></i> Agregar Ítem
+      </button>
+    </div>
+
+    <div class="table-wrapper">
+      <table class="table" id="tablaItems">
+
+        <thead>
+          <tr>
+            <th style="width:38%;">Producto</th>
+            <th style="width:14%;">Cantidad</th>
+            <th style="width:20%;">Precio Unit. (Bs.)</th>
+            <th style="width:20%;">Subtotal (Bs.)</th>
+            <th style="width:8%; text-align:center;">×</th>
+          </tr>
+        </thead>
+
+        {# tbody vacío — la primera fila se inserta con JS al cargar #}
+        <tbody id="cuerpoItems"></tbody>
+
+      </table>
+    </div>
+
+  </div>
+  {# Fin sección 2 #}
+
+
+  {# ══════════════════════════════════════════════════════════════════════════
+     SECCIÓN 3 — Totales y botones de acción (alineado a la derecha)
+     Subtotal, Descuento y Total Final calculados en tiempo real por JS.
+     ══════════════════════════════════════════════════════════════════════════ #}
+  <div style="display:flex; justify-content:flex-end; margin-bottom:40px;">
+
+    <div class="card" style="min-width:340px; max-width:400px;">
+      <div style="padding:20px 24px;">
+
+        {# Fila: Subtotal (suma de cantidad × precio de cada ítem) #}
+        <div style="display:flex; justify-content:space-between; align-items:center;
+                    padding:9px 0; border-bottom:1px solid var(--border);">
+          <span style="color:var(--text-secondary); font-size:14px;">Subtotal</span>
+          <span id="totalSubtotal"
+                style="font-weight:600; color:var(--text-primary);">
+            Bs. 0.00
+          </span>
+        </div>
+
+        {# Fila: Descuento calculado según porcentaje ingresado #}
+        <div style="display:flex; justify-content:space-between; align-items:center;
+                    padding:9px 0; border-bottom:1px solid var(--border);">
+          <span style="color:var(--text-secondary); font-size:14px;">
+            Descuento (<span id="pctDescuento">0</span>%)
+          </span>
+          <span id="totalDescuento"
+                style="font-weight:600; color:var(--accent-red);">
+            - Bs. 0.00
+          </span>
+        </div>
+
+        {# Fila: Total Final = Subtotal - Descuento #}
+        <div style="display:flex; justify-content:space-between; align-items:center;
+                    padding:12px 0 4px 0;">
+          <span style="color:var(--text-primary); font-size:16px; font-weight:700;">
+            Total Final
+          </span>
+          <span id="totalFinal"
+                style="font-size:22px; font-weight:800; color:var(--accent-green);">
+            Bs. 0.00
+          </span>
+        </div>
+
+        <hr style="border:none; border-top:1px solid var(--border); margin:14px 0;" />
+
+        {# Botones: Cancelar vuelve a /contabilidad; Guardar envía el formulario #}
+        <div style="display:flex; gap:12px; justify-content:flex-end;">
+
+          <a href="{{ url_for('contabilidad') }}" class="btn btn-secondary">
+            <i class="fa-solid fa-xmark"></i> Cancelar
+          </a>
+
+          <button type="submit" class="btn btn-primary">
+            <i class="fa-solid fa-floppy-disk"></i> Guardar Factura
+          </button>
+
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+  {# Fin sección 3 #}
+
+</form>
+{# Fin formulario #}
+
+{% endblock %}
+
+
+{# ═══════════════════════════════════════════════════════════════════════════
+   EXTRA_JS — Tabla dinámica de ítems: agregar, eliminar, calcular totales
+   ═══════════════════════════════════════════════════════════════════════════ #}
+{% block extra_js %}
+<script>
+
+/* ── Datos de productos serializados desde Jinja2 → JavaScript ───────────────
+   Se usa tojson para escapar correctamente nombres con comillas u otros
+   caracteres especiales. Cada clave es el ID del producto.                   */
+const PRODUCTOS = {};
+{% for p in productos %}
+PRODUCTOS[{{ p.id }}] = {
+  nombre: {{ p.nombre | tojson }},
+  precio: {{ p.precio_unitario }},
+  unidad: {{ p.unidad | tojson }}
+};
+{% endfor %}
+
+/* ── Contador global de filas: solo sube, nunca baja ─────────────────────────
+   Garantiza IDs de fila únicos aunque se agreguen y eliminen ítems.         */
+let contadorFilas = 0;
+
+
+/* ── buildOpcionesProductos() ────────────────────────────────────────────────
+   Genera el HTML de las opciones del select de producto.
+   Guarda el precio en data-precio para leerlo sin búsquedas adicionales.    */
+function buildOpcionesProductos() {
+  let html = '<option value="">— Seleccionar producto —</option>';
+  for (const [id, p] of Object.entries(PRODUCTOS)) {
+    html += `<option value="${id}" data-precio="${p.precio}">${p.nombre} (${p.unidad})</option>`;
+  }
+  return html;
+}
+
+
+/* ── agregarFila() ───────────────────────────────────────────────────────────
+   Inserta una nueva fila en la tabla de ítems y actualiza el conteo.        */
+function agregarFila() {
+  contadorFilas++;
+
+  const fila = document.createElement('tr');
+  fila.id = 'fila-' + contadorFilas;
+  fila.innerHTML = `
+    <td>
+      <select name="producto_id_tmp" class="form-control sel-producto"
+              onchange="alSeleccionarProducto(this)">
+        ${buildOpcionesProductos()}
+      </select>
+    </td>
+    <td>
+      <input type="number" name="cantidad_tmp" class="form-control inp-cantidad"
+             value="1" min="1" step="1"
+             oninput="alCambiarCantidad(this)" required />
+    </td>
+    <td>
+      <input type="number" name="precio_tmp" class="form-control inp-precio"
+             value="0.00" step="0.01" min="0" readonly
+             style="background:var(--bg-hover); cursor:default;
+                    color:var(--text-secondary);" />
+    </td>
+    <td>
+      <input type="text" class="form-control inp-subtotal" value="Bs. 0.00" readonly
+             style="background:var(--bg-hover); cursor:default;
+                    color:var(--accent-green); font-weight:700;" />
+    </td>
+    <td style="text-align:center;">
+      <button type="button" class="btn btn-icon btn-icon-danger"
+              onclick="eliminarFila(this)" title="Eliminar ítem">
+        <i class="fa-solid fa-xmark"></i>
+      </button>
+    </td>
+  `;
+
+  document.getElementById('cuerpoItems').appendChild(fila);
+
+  // Reindexar y recalcular después de agregar
+  reindexarFilas();
+  recalcularTotales();
+}
+
+
+/* ── eliminarFila(btn) ───────────────────────────────────────────────────────
+   Elimina la fila que contiene el botón ×, respetando el mínimo de 1 fila.  */
+function eliminarFila(btn) {
+  const tbody = document.getElementById('cuerpoItems');
+  if (tbody.querySelectorAll('tr').length <= 1) {
+    alert('La factura debe tener al menos un ítem.');
+    return;
+  }
+  btn.closest('tr').remove();
+  reindexarFilas();
+  recalcularTotales();
+}
+
+
+/* ── reindexarFilas() ────────────────────────────────────────────────────────
+   Renombra los inputs de cada fila con índice consecutivo 1…N para que
+   app.py pueda leerlos con un simple range(1, num_items + 1).               */
+function reindexarFilas() {
+  const filas = document.querySelectorAll('#cuerpoItems tr');
+  filas.forEach((fila, i) => {
+    const idx = i + 1;
+    fila.querySelector('.sel-producto').name = `producto_id_${idx}`;
+    fila.querySelector('.inp-cantidad').name = `cantidad_${idx}`;
+    fila.querySelector('.inp-precio').name   = `precio_${idx}`;
+  });
+  // Actualizar el campo oculto con el total actual de ítems
+  document.getElementById('numItems').value = filas.length;
+}
+
+
+/* ── alSeleccionarProducto(selectEl) ─────────────────────────────────────────
+   Al elegir un producto, rellena automáticamente el precio unitario (readonly)
+   desde el atributo data-precio de la opción seleccionada.                  */
+function alSeleccionarProducto(selectEl) {
+  const fila  = selectEl.closest('tr');
+  const opt   = selectEl.options[selectEl.selectedIndex];
+  const precio = parseFloat(opt.dataset.precio) || 0;
+
+  // Rellenar el input de precio con el valor del producto
+  fila.querySelector('.inp-precio').value = precio.toFixed(2);
+
+  // Recalcular el subtotal de esta fila y el total general
+  recalcularSubtotalFila(fila);
+  recalcularTotales();
+}
+
+
+/* ── alCambiarCantidad(inputEl) ──────────────────────────────────────────────
+   Al cambiar la cantidad, recalcula el subtotal de la fila y el total.      */
+function alCambiarCantidad(inputEl) {
+  const fila = inputEl.closest('tr');
+  recalcularSubtotalFila(fila);
+  recalcularTotales();
+}
+
+
+/* ── recalcularSubtotalFila(fila) ────────────────────────────────────────────
+   Calcula cantidad × precio y lo muestra en el campo subtotal (readonly).   */
+function recalcularSubtotalFila(fila) {
+  const cant   = parseFloat(fila.querySelector('.inp-cantidad').value) || 0;
+  const precio = parseFloat(fila.querySelector('.inp-precio').value)   || 0;
+  fila.querySelector('.inp-subtotal').value = 'Bs. ' + formatearNum(cant * precio);
+}
+
+
+/* ── recalcularTotales() ─────────────────────────────────────────────────────
+   Suma todos los subtotales, aplica el descuento % y actualiza los tres
+   campos del panel de totales (Subtotal, Descuento, Total Final).           */
+function recalcularTotales() {
+  let suma = 0;
+
+  // Sumar cantidad × precio de cada fila visible
+  document.querySelectorAll('#cuerpoItems tr').forEach(fila => {
+    const cant   = parseFloat(fila.querySelector('.inp-cantidad')?.value) || 0;
+    const precio = parseFloat(fila.querySelector('.inp-precio')?.value)   || 0;
+    suma += cant * precio;
+  });
+
+  // Calcular descuento y total final
+  const pct       = parseFloat(document.getElementById('inputDescuento')?.value) || 0;
+  const descuento = suma * (pct / 100);
+  const total     = suma - descuento;
+
+  // Actualizar el panel de totales
+  document.getElementById('totalSubtotal').textContent  = 'Bs. ' + formatearNum(suma);
+  document.getElementById('totalDescuento').textContent = '- Bs. ' + formatearNum(descuento);
+  document.getElementById('pctDescuento').textContent   = pct % 1 === 0 ? pct : pct.toFixed(2);
+  document.getElementById('totalFinal').textContent     = 'Bs. ' + formatearNum(total);
+}
+
+
+/* ── formatearNum(n) ─────────────────────────────────────────────────────────
+   Formatea un número con 2 decimales y separador de miles (comas).          */
+function formatearNum(n) {
+  return n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+
+/* ── Inicialización al cargar el DOM ─────────────────────────────────────────
+   Se agrega la primera fila para que el formulario nunca aparezca vacío.
+   Si las fechas vienen vacías desde app.py, se establecen por JS como
+   fallback (today y today+30 días).                                          */
+document.addEventListener('DOMContentLoaded', () => {
+
+  // Fallback de fechas si app.py no las pasó
+  const hoy = new Date().toISOString().slice(0, 10);
+  const fechaEmision = document.getElementById('fechaEmision');
+  if (fechaEmision && !fechaEmision.value) {
+    fechaEmision.value = hoy;
+  }
+  const fechaVence = document.getElementById('fechaVencimiento');
+  if (fechaVence && !fechaVence.value) {
+    const d30 = new Date();
+    d30.setDate(d30.getDate() + 30);
+    fechaVence.value = d30.toISOString().slice(0, 10);
+  }
+
+  // Insertar la primera fila obligatoria
+  agregarFila();
+});
+
+</script>
+{% endblock %}

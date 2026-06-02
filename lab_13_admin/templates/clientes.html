@@ -1,0 +1,516 @@
+{% extends "base.html" %}
+{# ============================================================================
+   clientes.html — Módulo CRM: listado completo de clientes con CRUD
+   Extiende base.html.
+
+   Variables recibidas desde app.py (ruta GET /clientes):
+     clientes → list : todos los clientes (id, nombre, empresa, email,
+                        telefono, ciudad, direccion, estado, fecha_registro)
+   ============================================================================ #}
+
+{% block page_title %}Clientes{% endblock %}
+{% block nav_title %}<i class="fa-solid fa-users page-icon"></i> Clientes{% endblock %}
+
+{% block content %}
+
+{# ── Cabecera de página: título + botón "Nuevo Cliente" ────────────────────── #}
+<div class="page-header">
+  <div class="page-header-left">
+    <h2>Gestión de Clientes</h2>
+    <p>CRM · Directorio completo de clientes registrados en el sistema</p>
+  </div>
+  <div class="page-header-actions">
+    {# Botón que abre el modal de creación de cliente #}
+    <button class="btn btn-primary" onclick="abrirModal('modalNuevoCliente')">
+      <i class="fa-solid fa-user-plus"></i>
+      Nuevo Cliente
+    </button>
+  </div>
+</div>
+
+
+{# ── Stat bar: estadísticas rápidas calculadas desde la lista Jinja2 ──────── #}
+{# Calculamos los conteos aquí mismo para no necesitar variables extra en app.py #}
+{% set total_cl   = clientes | length %}
+{% set activos_cl = clientes | selectattr('estado', 'equalto', 'Activo')   | list | length %}
+{% set inact_cl   = clientes | selectattr('estado', 'equalto', 'Inactivo') | list | length %}
+
+<div class="grid-3" style="margin-bottom: 24px;">
+
+  <div class="stat-card">
+    <span class="stat-label"><i class="fa-solid fa-users"></i> Total Clientes</span>
+    <span class="stat-value">{{ total_cl }}</span>
+    <span class="stat-sub">Registrados en el sistema</span>
+  </div>
+
+  <div class="stat-card">
+    <span class="stat-label"><i class="fa-solid fa-circle-check"></i> Activos</span>
+    <span class="stat-value green">{{ activos_cl }}</span>
+    <span class="stat-sub">Con relación comercial vigente</span>
+  </div>
+
+  <div class="stat-card">
+    <span class="stat-label"><i class="fa-solid fa-circle-xmark"></i> Inactivos</span>
+    <span class="stat-value {% if inact_cl > 0 %}yellow{% else %}green{% endif %}">
+      {{ inact_cl }}
+    </span>
+    <span class="stat-sub">Sin actividad reciente</span>
+  </div>
+
+</div>
+
+
+{# ── Card principal: filtros + tabla de clientes ───────────────────────────── #}
+<div class="card">
+
+  {# ── Barra de filtros ──────────────────────────────────────────────────── #}
+  <div class="card-header">
+    <span class="card-title">
+      <i class="fa-solid fa-list"></i> Directorio de Clientes
+    </span>
+
+    {# Filtros: buscador de texto + select de estado #}
+    <div class="filters-row">
+
+      {# Buscador en tiempo real — filtra la tabla con JS sin recargar #}
+      <div class="input-with-icon" style="min-width:220px;">
+        <span class="input-icon"><i class="fa-solid fa-magnifying-glass"></i></span>
+        <input
+          type="text"
+          id="buscadorClientes"
+          class="form-control"
+          placeholder="Buscar por nombre, empresa, ciudad..."
+          oninput="filtrarTabla()"
+        />
+      </div>
+
+      {# Filtro por estado — también usa filtrarTabla() #}
+      <select id="filtroEstado" class="form-control" style="min-width:140px;"
+              onchange="filtrarTabla()">
+        <option value="">Todos los estados</option>
+        <option value="Activo">Activo</option>
+        <option value="Inactivo">Inactivo</option>
+      </select>
+
+    </div>
+  </div>
+  {# Fin barra de filtros #}
+
+  {# ── Tabla de clientes ─────────────────────────────────────────────────── #}
+  <div class="table-wrapper">
+    <table class="table" id="tablaClientes">
+
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Nombre</th>
+          <th class="hide-mobile">Empresa</th>
+          <th class="hide-mobile">Email</th>
+          <th class="hide-mobile">Teléfono</th>
+          <th class="hide-mobile">Ciudad</th>
+          <th>Estado</th>
+          <th>Acciones</th>
+        </tr>
+      </thead>
+
+      <tbody id="cuerpoTablaClientes">
+        {# Iterar sobre todos los clientes pasados desde app.py #}
+        {% for c in clientes %}
+        <tr class="fila-cliente"
+            data-nombre="{{ c.nombre | lower }}"
+            data-empresa="{{ (c.empresa or '') | lower }}"
+            data-email="{{ (c.email or '') | lower }}"
+            data-ciudad="{{ (c.ciudad or '') | lower }}"
+            data-estado="{{ c.estado }}">
+
+          {# ID del cliente #}
+          <td style="color:var(--text-muted); font-size:12px;">#{{ c.id }}</td>
+
+          {# Nombre con avatar inicial #}
+          <td>
+            <div style="display:flex; align-items:center; gap:10px;">
+              {# Avatar circular con la inicial del nombre #}
+              <div style="width:32px; height:32px; border-radius:50%;
+                          background:var(--gradient-accent); display:flex;
+                          align-items:center; justify-content:center;
+                          font-size:13px; font-weight:700; color:#fff; flex-shrink:0;">
+                {{ c.nombre[0] | upper }}
+              </div>
+              <div>
+                <div class="cell-title">{{ c.nombre }}</div>
+                {# En móvil mostramos la empresa bajo el nombre #}
+                <div class="cell-sub" style="display:none;" id="sub-mob-{{ c.id }}">
+                  {{ c.empresa or '—' }}
+                </div>
+              </div>
+            </div>
+          </td>
+
+          <td class="hide-mobile">
+            <span style="color:var(--text-secondary); font-size:13px;">
+              {{ c.empresa or '—' }}
+            </span>
+          </td>
+
+          <td class="hide-mobile">
+            {% if c.email %}
+              <a href="mailto:{{ c.email }}"
+                 style="color:var(--accent-light); font-size:13px;">
+                {{ c.email }}
+              </a>
+            {% else %}
+              <span class="text-muted">—</span>
+            {% endif %}
+          </td>
+
+          <td class="hide-mobile" style="font-size:13px; color:var(--text-secondary);">
+            {{ c.telefono or '—' }}
+          </td>
+
+          <td class="hide-mobile" style="font-size:13px; color:var(--text-secondary);">
+            {{ c.ciudad or '—' }}
+          </td>
+
+          {# Badge de estado con color semántico #}
+          <td>
+            {% if c.estado == 'Activo' %}
+              <span class="badge badge-success">{{ c.estado }}</span>
+            {% else %}
+              <span class="badge badge-danger">{{ c.estado }}</span>
+            {% endif %}
+          </td>
+
+          {# Botones de acción: Ver | Editar | Eliminar #}
+          <td>
+            <div class="actions-cell">
+
+              {# Ver detalle del cliente #}
+              <a href="{{ url_for('cliente_detalle', id=c.id) }}"
+                 class="btn btn-icon"
+                 title="Ver detalle">
+                <i class="fa-solid fa-eye"></i>
+              </a>
+
+              {# Editar: almacena los datos del cliente en atributos data-*
+                 para que JS los inyecte en el modal de edición #}
+              <button
+                class="btn btn-icon"
+                title="Editar cliente"
+                onclick="abrirModalEditar(this)"
+                data-id="{{ c.id }}"
+                data-nombre="{{ c.nombre }}"
+                data-empresa="{{ c.empresa or '' }}"
+                data-email="{{ c.email or '' }}"
+                data-telefono="{{ c.telefono or '' }}"
+                data-ciudad="{{ c.ciudad or '' }}"
+                data-direccion="{{ c.direccion or '' }}"
+                data-estado="{{ c.estado }}"
+              >
+                <i class="fa-solid fa-pen"></i>
+              </button>
+
+              {# Eliminar: usa confirmDelete() definido en main.js #}
+              <form action="{{ url_for('cliente_eliminar', id=c.id) }}"
+                    method="POST"
+                    id="formEliminar{{ c.id }}"
+                    style="display:inline;">
+                <button
+                  type="button"
+                  class="btn btn-icon btn-icon-danger"
+                  title="Eliminar cliente"
+                  onclick="confirmDelete('formEliminar{{ c.id }}', '{{ c.nombre }}')">
+                  <i class="fa-solid fa-trash"></i>
+                </button>
+              </form>
+
+            </div>
+          </td>
+
+        </tr>
+        {% else %}
+        {# Estado vacío si no hay clientes #}
+        <tr>
+          <td colspan="8">
+            <div class="empty-state">
+              <i class="fa-solid fa-users-slash"></i>
+              <p>No hay clientes registrados aún.<br>
+                <a href="#" onclick="abrirModal('modalNuevoCliente')">
+                  Agrega el primero
+                </a>
+              </p>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+
+    </table>
+  </div>
+
+  {# Contador de resultados visibles (lo actualiza filtrarTabla() en JS) #}
+  <div style="padding:12px 24px; border-top:1px solid var(--border);
+              font-size:12px; color:var(--text-muted); text-align:right;">
+    Mostrando <span id="contadorFilas">{{ clientes | length }}</span>
+    de {{ clientes | length }} clientes
+  </div>
+
+</div>
+{# Fin card tabla #}
+
+
+{# ══════════════════════════════════════════════════════════════════════════
+   MODAL: Nuevo Cliente
+   ══════════════════════════════════════════════════════════════════════════ #}
+<div class="modal-overlay" id="modalNuevoCliente"
+     onclick="cerrarAlClickAfuera(event, 'modalNuevoCliente')">
+  <div class="modal">
+
+    <div class="modal-header">
+      <span class="modal-title">
+        <i class="fa-solid fa-user-plus"></i>
+        Registrar Nuevo Cliente
+      </span>
+      <button class="modal-close" onclick="cerrarModal('modalNuevoCliente')"
+              aria-label="Cerrar">&times;</button>
+    </div>
+
+    {# Formulario POST a /clientes/nuevo #}
+    <form action="{{ url_for('cliente_nuevo') }}" method="POST">
+      <div class="modal-body">
+
+        <div class="form-grid-2">
+          <div class="form-group">
+            <label class="form-label required">Nombre Completo</label>
+            <input type="text" name="nombre" class="form-control"
+                   placeholder="Ej: Carlos Quispe Mamani" required />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Empresa / Organización</label>
+            <input type="text" name="empresa" class="form-control"
+                   placeholder="Ej: Tigo Bolivia S.A." />
+          </div>
+        </div>
+
+        <div class="form-grid-2">
+          <div class="form-group">
+            <label class="form-label">Correo Electrónico</label>
+            <input type="email" name="email" class="form-control"
+                   placeholder="correo@empresa.com.bo" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Teléfono</label>
+            <input type="text" name="telefono" class="form-control"
+                   placeholder="Ej: 72345678" maxlength="15" />
+          </div>
+        </div>
+
+        <div class="form-grid-2">
+          <div class="form-group">
+            <label class="form-label">Ciudad</label>
+            <select name="ciudad" class="form-control">
+              <option value="">— Seleccionar —</option>
+              <option>Sucre</option>
+              <option>La Paz</option>
+              <option>Cochabamba</option>
+              <option>Santa Cruz</option>
+              <option>Oruro</option>
+              <option>Potosí</option>
+              <option>Tarija</option>
+              <option>Beni</option>
+              <option>Pando</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Estado</label>
+            <select name="estado" class="form-control">
+              <option value="Activo">Activo</option>
+              <option value="Inactivo">Inactivo</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Dirección</label>
+          <textarea name="direccion" class="form-control" rows="2"
+                    placeholder="Av. Principal Nro. 123, Zona..."></textarea>
+        </div>
+
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary"
+                onclick="cerrarModal('modalNuevoCliente')">
+          Cancelar
+        </button>
+        <button type="submit" class="btn btn-primary">
+          <i class="fa-solid fa-floppy-disk"></i> Guardar Cliente
+        </button>
+      </div>
+    </form>
+
+  </div>
+</div>
+{# Fin modal Nuevo Cliente #}
+
+
+{# ══════════════════════════════════════════════════════════════════════════
+   MODAL: Editar Cliente
+   La acción del form y los valores se setean dinámicamente con JS
+   ══════════════════════════════════════════════════════════════════════════ #}
+<div class="modal-overlay" id="modalEditarCliente"
+     onclick="cerrarAlClickAfuera(event, 'modalEditarCliente')">
+  <div class="modal">
+
+    <div class="modal-header">
+      <span class="modal-title">
+        <i class="fa-solid fa-pen-to-square"></i>
+        Editar Cliente
+      </span>
+      <button class="modal-close" onclick="cerrarModal('modalEditarCliente')"
+              aria-label="Cerrar">&times;</button>
+    </div>
+
+    {# El action se actualiza con JS antes de abrir el modal #}
+    <form id="formEditarCliente" method="POST">
+      <div class="modal-body">
+
+        <div class="form-grid-2">
+          <div class="form-group">
+            <label class="form-label required">Nombre Completo</label>
+            <input type="text" name="nombre" id="edit_nombre" class="form-control"
+                   required />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Empresa / Organización</label>
+            <input type="text" name="empresa" id="edit_empresa" class="form-control" />
+          </div>
+        </div>
+
+        <div class="form-grid-2">
+          <div class="form-group">
+            <label class="form-label">Correo Electrónico</label>
+            <input type="email" name="email" id="edit_email" class="form-control" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Teléfono</label>
+            <input type="text" name="telefono" id="edit_telefono" class="form-control"
+                   maxlength="15" />
+          </div>
+        </div>
+
+        <div class="form-grid-2">
+          <div class="form-group">
+            <label class="form-label">Ciudad</label>
+            <select name="ciudad" id="edit_ciudad" class="form-control">
+              <option value="">— Seleccionar —</option>
+              <option>Sucre</option>
+              <option>La Paz</option>
+              <option>Cochabamba</option>
+              <option>Santa Cruz</option>
+              <option>Oruro</option>
+              <option>Potosí</option>
+              <option>Tarija</option>
+              <option>Beni</option>
+              <option>Pando</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Estado</label>
+            <select name="estado" id="edit_estado" class="form-control">
+              <option value="Activo">Activo</option>
+              <option value="Inactivo">Inactivo</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Dirección</label>
+          <textarea name="direccion" id="edit_direccion" class="form-control"
+                    rows="2"></textarea>
+        </div>
+
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary"
+                onclick="cerrarModal('modalEditarCliente')">
+          Cancelar
+        </button>
+        <button type="submit" class="btn btn-primary">
+          <i class="fa-solid fa-floppy-disk"></i> Guardar Cambios
+        </button>
+      </div>
+    </form>
+
+  </div>
+</div>
+{# Fin modal Editar Cliente #}
+
+{% endblock %}
+
+
+{# ═══════════════════════════════════════════════════════════════════════════
+   EXTRA_JS — Búsqueda, filtros y lógica de modales de clientes
+   ═══════════════════════════════════════════════════════════════════════════ #}
+{% block extra_js %}
+<script>
+/* ── filtrarTabla() ──────────────────────────────────────────────────────────
+   Filtra las filas de la tabla combinando:
+   - El texto del buscador (busca en nombre, empresa, email y ciudad)
+   - El valor del select de estado
+   Actualiza el contador de resultados visibles al final.                     */
+function filtrarTabla() {
+  const texto  = document.getElementById('buscadorClientes').value.toLowerCase().trim();
+  const estado = document.getElementById('filtroEstado').value;
+  const filas  = document.querySelectorAll('.fila-cliente');
+  let   visibles = 0;
+
+  filas.forEach(fila => {
+    // Leer los atributos data-* que contienen los textos de búsqueda
+    const coincideTexto = !texto ||
+      fila.dataset.nombre.includes(texto)  ||
+      fila.dataset.empresa.includes(texto) ||
+      fila.dataset.email.includes(texto)   ||
+      fila.dataset.ciudad.includes(texto);
+
+    // Comparar el estado seleccionado con el estado de la fila
+    const coincideEstado = !estado || fila.dataset.estado === estado;
+
+    if (coincideTexto && coincideEstado) {
+      fila.style.display = '';
+      visibles++;
+    } else {
+      fila.style.display = 'none';
+    }
+  });
+
+  // Actualizar el contador de filas visibles
+  const contador = document.getElementById('contadorFilas');
+  if (contador) contador.textContent = visibles;
+}
+
+
+/* ── abrirModalEditar(btn) ───────────────────────────────────────────────────
+   Rellena el modal de edición con los datos del cliente cuyo botón
+   se pulsó (leídos desde los atributos data-* del botón).
+   También actualiza el action del formulario con el ID correcto.             */
+function abrirModalEditar(btn) {
+  const id = btn.dataset.id;
+
+  // Actualizar la ruta del formulario con el ID del cliente a editar
+  document.getElementById('formEditarCliente').action = `/clientes/${id}/editar`;
+
+  // Rellenar cada campo con el valor almacenado en el data-attribute del botón
+  document.getElementById('edit_nombre').value    = btn.dataset.nombre    || '';
+  document.getElementById('edit_empresa').value   = btn.dataset.empresa   || '';
+  document.getElementById('edit_email').value     = btn.dataset.email     || '';
+  document.getElementById('edit_telefono').value  = btn.dataset.telefono  || '';
+  document.getElementById('edit_ciudad').value    = btn.dataset.ciudad    || '';
+  document.getElementById('edit_estado').value    = btn.dataset.estado    || 'Activo';
+  document.getElementById('edit_direccion').value = btn.dataset.direccion || '';
+
+  // Mostrar el modal de edición
+  abrirModal('modalEditarCliente');
+}
+</script>
+{% endblock %}

@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+{#
+  base.html — Layout base del sistema Acumatica ERP
+  Todos los templates (excepto login) extienden este archivo con:
+    {% extends "base.html" %}
+  y rellenan los bloques:
+    {% block page_title %}  ← título en la navbar superior
+    {% block content %}     ← contenido principal de la página
+    {% block extra_js %}    ← scripts adicionales específicos de cada página
+#}
+<html lang="es">
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     HEAD — Metadatos, fuentes y hojas de estilo
+     ═══════════════════════════════════════════════════════════════════════ -->
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Acumatica ERP Prototipo — SIS-315 USFX 2025" />
+  <title>{% block page_title %}Dashboard{% endblock %} · Acumatica ERP</title>
+
+  <!-- Google Fonts: Inter (tipografía principal del sistema) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+        rel="stylesheet" />
+
+  <!-- Font Awesome 6 — íconos vectoriales (CDN gratuito) -->
+  <link rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"
+        integrity="sha512-DTOQO9RWCH3ppGqcWaEA1BIZOC6xxalwEsw9c2QQeAIftl+Vegovlnee1c9QX4TctnWMn13TZye+giMm8e2LwA=="
+        crossorigin="anonymous" referrerpolicy="no-referrer" />
+
+  <!-- Chart.js — biblioteca de gráficos interactivos (CDN) -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+
+  <!-- Hoja de estilos principal del proyecto -->
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
+</head>
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     BODY — Estructura principal: sidebar + navbar + contenido
+     ═══════════════════════════════════════════════════════════════════════ -->
+<body>
+
+  <!-- Overlay oscuro que aparece detrás del sidebar cuando se abre en móvil -->
+  <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
+
+  <!-- ─────────────────────────────────────────────────────────────────────
+       SIDEBAR — Panel de navegación fijo a la izquierda (240 px)
+       ───────────────────────────────────────────────────────────────────── -->
+  <aside class="sidebar" id="sidebar">
+
+    <!-- Marca / Logo en la parte superior -->
+    <a href="{{ url_for('dashboard') }}" class="sidebar-brand">
+      <div class="sidebar-brand-icon">
+        <i class="fa-solid fa-building-columns"></i>
+      </div>
+      <div class="sidebar-brand-text">
+        <span class="brand-name">ACUMATICA ERP</span>
+        <span class="brand-sub">SIS-315 · USFX</span>
+      </div>
+    </a>
+
+    <!-- Navegación principal del sidebar -->
+    <nav class="sidebar-nav">
+
+      <!-- Sección principal de módulos -->
+      <p class="nav-section-title">Módulos</p>
+
+      <!-- Dashboard — página de inicio con KPIs y gráficos -->
+      <a href="{{ url_for('dashboard') }}"
+         class="nav-link {% if request.endpoint == 'dashboard' %}active{% endif %}">
+        <i class="fa-solid fa-gauge-high"></i>
+        Dashboard
+      </a>
+
+      <!-- CRM / Clientes -->
+      <a href="{{ url_for('clientes') }}"
+         class="nav-link {% if request.endpoint in ['clientes', 'cliente_detalle', 'cliente_nuevo', 'cliente_editar', 'cliente_eliminar'] %}active{% endif %}">
+        <i class="fa-solid fa-users"></i>
+        Clientes
+      </a>
+
+      <!-- Inventario / Productos -->
+      <a href="{{ url_for('inventario') }}"
+         class="nav-link {% if request.endpoint in ['inventario', 'inventario_nuevo', 'inventario_editar', 'inventario_eliminar'] %}active{% endif %}">
+        <i class="fa-solid fa-boxes-stacked"></i>
+        Inventario
+      </a>
+
+      <!-- Contabilidad — Facturas y gastos -->
+      <a href="{{ url_for('contabilidad') }}"
+         class="nav-link {% if request.endpoint in ['contabilidad', 'nueva_factura', 'factura_pagar'] %}active{% endif %}">
+        <i class="fa-solid fa-file-invoice-dollar"></i>
+        Contabilidad
+      </a>
+
+      <!-- Reportes y análisis -->
+      <a href="{{ url_for('reportes') }}"
+         class="nav-link {% if request.endpoint == 'reportes' %}active{% endif %}">
+        <i class="fa-solid fa-chart-pie"></i>
+        Reportes
+      </a>
+
+      <!-- Separador de sección -->
+      <p class="nav-section-title" style="margin-top: 8px;">Sistema</p>
+
+      <!-- Enlace de configuración del sistema -->
+      <a href="{{ url_for('configuracion') }}" class="nav-link">
+        <i class="fa-solid fa-gear"></i>
+        Configuración
+      </a>
+
+    </nav>
+
+    <!-- Perfil del usuario en la parte inferior del sidebar -->
+    <div class="sidebar-user">
+      <!-- Avatar con la primera letra del nombre del usuario -->
+      <div class="sidebar-user-avatar">
+        {{ session.get('nombre', 'U')[0] | upper }}
+      </div>
+      <div class="sidebar-user-info">
+        <span class="user-name">{{ session.get('nombre', 'Usuario') }}</span>
+        <span class="user-role">{{ session.get('rol', '') }}</span>
+      </div>
+      <!-- Botón de cerrar sesión -->
+      <a href="{{ url_for('logout') }}"
+         class="sidebar-logout"
+         title="Cerrar sesión">
+        <i class="fa-solid fa-right-from-bracket"></i>
+      </a>
+    </div>
+
+  </aside>
+  <!-- Fin sidebar -->
+
+
+  <!-- ─────────────────────────────────────────────────────────────────────
+       CONTENIDO PRINCIPAL — Todo lo que va a la derecha del sidebar
+       ───────────────────────────────────────────────────────────────────── -->
+  <div class="main-content">
+
+    <!-- ───────────────────────────────────────────────────────────────────
+         NAVBAR SUPERIOR — Título de página, usuario y acciones
+         ─────────────────────────────────────────────────────────────────── -->
+    <header class="navbar">
+
+      <!-- Izquierda: botón hamburguesa (móvil) + título de la página -->
+      <div style="display:flex; align-items:center; gap:14px;">
+
+        <!-- Botón hamburguesa: visible solo en pantallas ≤768 px -->
+        <button class="navbar-hamburger" id="hamburgerBtn" aria-label="Abrir menú">
+          <i class="fa-solid fa-bars"></i>
+        </button>
+
+        <!-- Título dinámico: cada template sobreescribe este bloque -->
+        <div class="navbar-title">
+          <h1>{% block nav_title %}{% block page_title_nav %}Dashboard{% endblock %}{% endblock %}</h1>
+        </div>
+
+      </div>
+
+      <!-- Derecha: notificaciones y chip de usuario -->
+      <div class="navbar-actions">
+
+        <!-- Botón de notificaciones con punto rojo indicador -->
+        <div class="navbar-btn" data-tooltip="Notificaciones">
+          <i class="fa-solid fa-bell"></i>
+          <span class="badge-dot"></span>
+        </div>
+
+        <!-- Chip con avatar, nombre y rol del usuario en sesión -->
+        <div class="navbar-user-chip">
+          <div class="chip-avatar">
+            {{ session.get('nombre', 'U')[0] | upper }}
+          </div>
+          <div>
+            <div class="chip-name">{{ session.get('nombre', 'Usuario') }}</div>
+            <div class="chip-role">{{ session.get('rol', '') }}</div>
+          </div>
+        </div>
+
+      </div>
+    </header>
+    <!-- Fin navbar -->
+
+
+    <!-- ───────────────────────────────────────────────────────────────────
+         FLASH MESSAGES — Notificaciones de operaciones (éxito/error/etc.)
+         Se renderizan automáticamente en todas las páginas que usen base.html
+         ─────────────────────────────────────────────────────────────────── -->
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <div class="flash-container" id="flashContainer">
+          {% for category, message in messages %}
+            <!--
+              La categoría viene de flash('mensaje', 'category') en app.py.
+              Categorías usadas: success, danger, warning, info
+            -->
+            <div class="flash-message flash-{{ category }}" role="alert">
+
+              <!-- Ícono según el tipo de mensaje -->
+              <span class="flash-icon">
+                {% if category == 'success' %}
+                  <i class="fa-solid fa-circle-check"></i>
+                {% elif category == 'danger' or category == 'error' %}
+                  <i class="fa-solid fa-circle-exclamation"></i>
+                {% elif category == 'warning' %}
+                  <i class="fa-solid fa-triangle-exclamation"></i>
+                {% else %}
+                  <i class="fa-solid fa-circle-info"></i>
+                {% endif %}
+              </span>
+
+              <span class="flash-text">{{ message }}</span>
+
+              <!-- Botón para cerrar el flash manualmente -->
+              <button class="flash-close" onclick="this.parentElement.remove()"
+                      aria-label="Cerrar">
+                <i class="fa-solid fa-xmark"></i>
+              </button>
+
+            </div>
+          {% endfor %}
+        </div>
+      {% endif %}
+    {% endwith %}
+    <!-- Fin flash messages -->
+
+
+    <!-- ───────────────────────────────────────────────────────────────────
+         BLOCK CONTENT — Cada template hijo inyecta su contenido aquí
+         ─────────────────────────────────────────────────────────────────── -->
+    <main class="page-content">
+      {% block content %}{% endblock %}
+    </main>
+    <!-- Fin page-content -->
+
+  </div>
+  <!-- Fin main-content -->
+
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       SCRIPTS — Cargados al final del body para no bloquear el render
+       ═══════════════════════════════════════════════════════════════════════ -->
+
+  <!-- JavaScript global: búsqueda en tablas, modales, formateo de moneda, etc. -->
+  <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+
+  <!-- Lógica del sidebar responsive (hamburguesa + backdrop) -->
+  <script>
+    // ── Sidebar responsivo ────────────────────────────────────────────────
+    const sidebar          = document.getElementById('sidebar');
+    const hamburgerBtn     = document.getElementById('hamburgerBtn');
+    const sidebarBackdrop  = document.getElementById('sidebarBackdrop');
+
+    // Abrir/cerrar el sidebar al pulsar el botón hamburguesa
+    hamburgerBtn.addEventListener('click', () => {
+      sidebar.classList.toggle('sidebar-open');
+      sidebarBackdrop.classList.toggle('active');
+    });
+
+    // Cerrar el sidebar al tocar el backdrop oscuro (fuera del panel)
+    sidebarBackdrop.addEventListener('click', () => {
+      sidebar.classList.remove('sidebar-open');
+      sidebarBackdrop.classList.remove('active');
+    });
+
+    // Cerrar sidebar si se redimensiona la ventana a escritorio
+    window.addEventListener('resize', () => {
+      if (window.innerWidth > 768) {
+        sidebar.classList.remove('sidebar-open');
+        sidebarBackdrop.classList.remove('active');
+      }
+    });
+  </script>
+
+  <!-- Block extra_js: scripts específicos de la página actual (gráficos, etc.) -->
+  {% block extra_js %}{% endblock %}
+
+</body>
+</html>
